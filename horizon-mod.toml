@@ -1,0 +1,38 @@
+# Mekanism Covers for Horizon — the mechanical half of a cosmetic Mekanism add-on.
+#
+# Upstream (`dev.lucaargolo.mekanismcovers`, MPL-2.0) adds covers to Mekanism's transmitters:
+# four empty covers from osmium nuggets, wood dust and glass; a filled cover carries a block id
+# in its `mekanismcovers:cover_block` component; right-clicking a cable, pipe or tube with one
+# makes the transmitter wear that block (a second cover drops the first); a wrench strips it;
+# breaking the transmitter drops it as a filled cover; the special `crafting_special_cover`
+# recipe fills an empty cover with a block and strips a filled one back, returning the block.
+#
+# This package carries the items, the component, both recipes and the per-transmitter cover
+# state with its replace/strip/drop rules. The **appearance** half (drawing the cover instead of
+# the transmitter, the full-block collision shape, the cover's light) has no hook at this pin
+# for a block another package registers; `notes.md` names the missing symbols.
+id = "mekanismcovers"
+name = "Mekanism Covers"
+version = "0.2.0"
+description = """A port of Mekanism Covers for Horizon: empty covers crafted from iron nuggets, oak
+planks and glass, a cover filled with any full block through the mod's own special crafting
+recipe, and a filled cover right-clicked onto a Mekanism transmitter so the transmitter carries
+that block (a second cover replaces and drops the first, sneak + right-click with an empty cover
+strips it, and breaking the transmitter drops it). The cover rides the transmitter's own saved
+data (mekanismcovers:cover), so it survives a reload with the block. The cover's appearance — the
+cover drawn instead of the transmitter, the full-block shape and its light — is recorded as a gap:
+the pinned API has no per-position appearance, shape or light override for a block another
+package registers."""
+authors = ["D4rkness_King", "AdLf0208"]
+# The content API: exact and checked. The package ships carried content beside its code, so the
+# capability is a real claim.
+api = "0.2"
+# The installation side, not the hook's: the cover state and its drops are server-side, and a LAN
+# host or single-player world runs them inside the client installation.
+side = "both"
+capabilities = ["registries"]
+
+[native]
+game = "26.3"
+horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

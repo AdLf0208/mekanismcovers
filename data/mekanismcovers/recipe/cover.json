@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "#R#",
+    "RGR",
+    "#R#"
+  ],
+  "key": {
+    "#": "#c:nuggets/iron",
+    "R": "minecraft:oak_planks",
+    "G": "#c:glass_blocks"
+  },
+  "result": {
+    "id": "mekanismcovers:empty_cover",
+    "count": 4
+  }
+}

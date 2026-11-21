@@ -1,0 +1,8 @@
+{
+  "title": "Mekanism Covers",
+  "icon": "mekanismcovers:empty_cover",
+  "items": [
+    "mekanismcovers:empty_cover",
+    "mekanismcovers:cover"
+  ]
+}
