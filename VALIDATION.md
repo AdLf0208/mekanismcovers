@@ -1,4 +1,106 @@
-# VALIDATION — mekanismcovers 0.2.0 / 0.2.1
+# VALIDATION — mekanismcovers 0.2.0 / 0.2.1 / 0.2.2
+
+## 0.2.2 — the fill refuses a stack it would destroy (2026-11-23)
+
+Reviewer blocker: `src/support.rs` built the fill from the material stack's **block id**, so the
+recipe consumed what the grid held and a strip handed back a fresh stack (a filled shulker box lost
+its contents; a named block lost its name). `runtime::special` now refuses a block-entity block, a
+stack with any component and a cover carrying anything besides its own `cover_block`; the recipe's
+`matches` is that rule, so a refusal means **no result, no consumption**. See `notes.md` §0.2.2 and
+§"Upstream defects fixed".
+
+| # | step | command | evidence | result |
+|---|---|---|---|---|
+| 1 | red | `cargo test --offline` with the four rules unwritten | `sdk-test-red-0.2.2.log` | **4 failed** (`left: Some(Fill(…))`, `right: None`), 14 passed |
+| 2 | tests | `cargo test --offline` | `sdk-test.log` | **18 passed**, 0 failed |
+| 3 | lints | `cargo clippy --all-targets --offline -- -D warnings` | `sdk-clippy.log` | 0 warnings, EXIT 0 |
+| 4 | format | `cargo fmt --all -- --check` | `sdk-fmt.log` | EXIT 0 |
+| 5 | build ×2 | `rm -f Cargo.lock && cargo horizon-mod build` twice, then strip the probe's `Cargo.lock` | `sdk-build.log` | **110,944 B**, SHA-256 `ff66815e65f539bee99fe4b1d85d4b6fb9fa65ce695df7b9c78711d2c966b362`, `CMP-IDENTICAL`, 24 entries, no packed lock |
+| 6 | check | `cargo horizon-mod check mekanismcovers.hmod` | `sdk-check.log` | `mekanismcovers 0.2.2 (native-mod, …)`, `110944 bytes, SHA-256 ff66815e…b362`, EXIT 0 |
+| 7 | fits, pin | `cargo horizon-mod fits mekanismcovers.hmod --build 0a875da` | `sdk-fits-pin.log` | `0a875da  made for`, EXIT 0 |
+| 8 | fits, other | `… --build 0b14f8a` | `sdk-fits-0b14f8a.log` | `0b14f8a  fits`, EXIT 0 |
+| 9 | package gate | `python3 ports/tools/verify-sdk-package.py mekanismcovers` | run output | **1/1** (package, runtime byte-identical, no packed lock, 18 tests, clippy, check, fits, skills gate) |
+| 10 | manifest deps | `python3 ports/tools/check-manifest-deps.py mekanismcovers` | run output | `ok declared=['mekanism']`, exit 0 |
+| 11 | absence proof | `horizon-launcher native-build` on a set of **only** `mekanismcovers` | `dep-absent.log` | `error: mekanismcovers requires missing mod mekanism (…)`, EXIT 1 |
+| 12 | data dialect | `python3 ports/tools/check_261_dialect.py mekanismcovers.hmod` | `sdk-dialect.log` | 2 recipe files, every one in the 26.3 dialect |
+| 13 | pair build | `tools/build-game.sh` | `pair-build-0.2.2.log` | `Compiling mekanism (1 of 2)` / `Compiling mekanismcovers (2 of 2)`, `native-0a875da-10f8e562a628` |
+| 14 | main leg | `tools/e2e.sh` (`CONTROL=0`), phases A–M | `mekanismcovers-e2e/e2e.log` | **PASS**, `EXIT:0` |
+| 15 | control | `CONTROL=1` | `mekanismcovers-e2e/e2e-control.log` | **PASS**, `EXIT:0` |
+| 16 | control counterfactual | `NEGATIVE=1 CONTROL=1` | `mekanismcovers-e2e/e2e-control-negative.log` | **FAIL**, `EXIT:1` (as required) |
+| 17 | selftest, replace | `SELFTEST=1 CONTROL=0` | `mekanismcovers-e2e/e2e-selftest.log` | **FAIL**, `EXIT:1` (as required) |
+| 18 | selftest, the fill refusal | `SELFTEST=refusal CONTROL=0` | `mekanismcovers-e2e/e2e-selftest-refusal.log` | **FAIL**, `EXIT:1` (as required) |
+| 19 | e2e log gate | `python3 ports/tools/check-e2e-logs.py mekanismcovers-e2e --strict` | run output | `logs=5 ok=5 missing-exit=0 bad-exit=0` |
+
+The red proof, verbatim from `sdk-test-red-0.2.2.log`:
+
+```
+---- runtime::tests::a_filled_shulker_box_cannot_fill_a_cover stdout ----
+assertion `left == right` failed
+  left: Some(Fill("minecraft:shulker_box"))
+ right: None
+
+---- runtime::tests::a_block_with_a_block_entity_cannot_fill_a_cover stdout ----
+assertion `left == right` failed: minecraft:shulker_box has a block entity and cannot be a cover
+  left: Some(Fill("minecraft:shulker_box"))
+ right: None
+
+---- runtime::tests::a_block_with_components_cannot_fill_a_cover stdout ----
+assertion `left == right` failed
+  left: Some(Fill("minecraft:stone"))
+ right: None
+
+---- runtime::tests::a_cover_with_components_of_its_own_is_refused stdout ----
+assertion `left == right` failed: a named empty cover cannot be filled
+  left: Some(Fill("minecraft:stone"))
+ right: None
+
+test result: FAILED. 14 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+The in-game refusal, verbatim from `e2e.log` (phases K–M):
+
+```
+== K. a filled shulker box fills nothing, and nothing is consumed ==
+  the shulker box in the grid carries its contents: {"components":"{\"minecraft:container\":[{item:{id:\"minecraft:diamond\"},slot:0}]}","count":1,"item":"minecraft:shulker_box","slot":101}
+  fill empty cover + filled shulker box -> no crafting result
+  nothing was consumed and the shulker box still carries its contents
+== L. a named block is refused the same way, and a plain one still fills ==
+  the block in the grid is named: {"components":"{\"minecraft:custom_name\":'{\"text\":\"Named\"}'}","count":1,"item":"minecraft:stone","slot":101}
+  fill empty cover + named stone -> no crafting result
+  the named stone is untouched
+  fill empty cover + plain stone (same table) -> 1 x mekanismcovers:cover
+  the plain stone filled a cover and exactly one stone was consumed
+== M. a filled shulker box clicked on a cable applies no cover ==
+  after the shulker click -> the transmitter wears no cover
+  no cover was applied and the shulker box stays in hand
+```
+
+The selftest of the new refusal, verbatim from `e2e-selftest-refusal.log`:
+
+```
+  fill empty cover + filled shulker box -> no crafting result
+FAIL: SELFTEST: expected the filled shulker box to fill a cover, and the recipe refused it
+EXIT:1
+```
+
+Every step ran inside a `ports/tools/build-slot.sh` lease (`BUILD_LOCAL=1`, `CARGO_INCREMENTAL=0`,
+no `--target-dir`, no private `BUILD_SLOTS_DIR`), from the campaign root, at pin
+**`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + horizon-mixins
+**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**; the game legs set `E2E_TMP` to a disk-backed root
+(`/tmp` is a 7.5 GB tmpfs here).
+
+### Packaging (0.2.2)
+
+```
+mekanismcovers.hmod   110,944 bytes
+sha256                ff66815e65f539bee99fe4b1d85d4b6fb9fa65ce695df7b9c78711d2c966b362
+entries               24 (horizon-mod.toml, Cargo.toml, LICENSE, LICENSE-NOTICE.md, README.md,
+                      3 src/*.rs, 6 assets/*, 7 data/*, icon.png, uses.json)
+declared version      0.2.2 (horizon-mod.toml == Cargo.toml == the registry record the orchestrator adds)
+Cargo.lock            not packed (the probe's file is stripped from each build)
+LICENSE               Mozilla Public License Version 2.0 (373 lines)
+LICENSE-NOTICE.md     names D4rkness_King and https://github.com/lucaargolo/mekanism-covers
+```
 
 ## 0.2.1 — the required parent declaration (2026-11-23)
 

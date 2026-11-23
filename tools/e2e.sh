@@ -3,8 +3,9 @@
 # `mekanismcovers:empty_cover` and `mekanismcovers:cover`, the jar's shaped empty-cover recipe, the
 # mod's own `crafting_special_cover` fill/strip recipe, and the cover a Mekanism transmitter
 # carries in its own saved data — attach, replace (the old cover drops), sneak-strip, the drop on
-# breaking the transmitter, and the two refusals (a block that is not a full cube, a click that is
-# not a transmitter).
+# breaking the transmitter, the two refusals (a block that is not a full cube, a click that is
+# not a transmitter), and the fill's refusal of a stack it would destroy (a filled shulker box, a
+# named block, a cover carrying components of its own): no result, nothing consumed.
 #
 # The package needs its parent compiled into the same game: a cover is worn by
 # `mekanism:basic_universal_cable`, whose block entity is declared by the `mekanism` port's code.
@@ -18,16 +19,16 @@
 #
 # The End arena (stone floor at y=63, cleared volume to y=74, every non-player entity removed):
 #   C  =  8,64,8   the spare cable everything is attached to, replaced and broken
-#   T  = 12,64,8   a second cable, for the cover the replace drops
+#   T  = 12,64,8   a second cable, for the filled-shulker gesture of phase M
 #   X  = 16,64,8   a stone block: the fix "not a transmitter" control
 #   B  = 20,64,8   the crafting table the recipes are made on
 #
 # CONTROL=1 (the default) also launches the same Nightly **without either package**, where
 # `mekanismcovers:empty_cover` is unknown and the cable cannot be placed, so nothing the main run
 # proves can come from the plain build. SELFTEST=1 flips the replace phase's "exactly one cover
-# dropped" assertion, so the run MUST exit 1. NEGATIVE=1 flips the control leg's "the plain build
-# does not know this item" assertion, so the control is proven able to fail too (that leg needs
-# CONTROL=1 and CONTROL_GAME).
+# dropped" assertion and SELFTEST=refusal flips the filled-shulker refusal, so either run MUST exit
+# 1. NEGATIVE=1 flips the control leg's "the plain build does not know this item" assertion, so the
+# control is proven able to fail too (that leg needs CONTROL=1 and CONTROL_GAME).
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${MC_DEBUG:-}" ] || set -x
@@ -178,6 +179,18 @@ expect_result() { # expect_result ITEM COUNT LABEL
     local n; n=$(menu_slots | jq -r --argjson s $RESULT '[.[] | select(.slot == $s) | .count] | first // 0')
     [ "$n" = "$2" ] || fail "$3: expected $2 $1 at the result, got $n"
     say "  $3 -> $n x $1"
+}
+
+expect_no_result() { # expect_no_result LABEL
+    local got; got=$(slot_item $RESULT)
+    [ -z "$got" ] || fail "$1: expected no crafting result, got '$got'"
+    say "  $1 -> no crafting result"
+}
+
+# One stack of the open menu as JSON, by item id: its `components` prove the stack the grid holds
+# still carries what it had (a shulker box's contents, a custom name).
+stack_json() { # stack_json ITEM
+    menu_slots | jq -c --arg i "$1" '[.[] | select(.item == $i)] | first // {}'
 }
 
 take_result() { # take_result HOTBAR
@@ -412,7 +425,95 @@ ctl wait 3 >/dev/null
 say "  the strip returned an empty cover and the block it wore"
 close_table
 
-say "PASS: covers, both recipes, attach, replace, strip, the break drop and both refusals"
+say "== K. a filled shulker box fills nothing, and nothing is consumed =="
+# The recipe keeps only a block id, so a stack whose item carries state (a shulker box's contents)
+# would be handed back empty after the strip. It must produce no result and consume nothing.
+open_table
+ctl command "item replace entity @s hotbar.1 with minecraft:shulker_box[minecraft:container=[{slot:0b,item:{id:\"minecraft:diamond\",count:1}}]] 1" >/dev/null
+ctl give $EMPTY 1 >/dev/null
+ctl wait 3 >/dev/null
+place_one $EMPTY 100
+place_one minecraft:shulker_box 101
+shulker_in=$(stack_json minecraft:shulker_box)
+case "$shulker_in" in
+    *container*) say "  the shulker box in the grid carries its contents: $shulker_in" ;;
+    *) fail "the shulker box in the grid lost its contents before the craft: $shulker_in" ;;
+esac
+expect_no_result "fill empty cover + filled shulker box"
+if [ "$SELFTEST" = refusal ]; then
+    # Counterfactual: claim the filled shulker box DID fill the cover, so this leg must fail.
+    [ "$(slot_item $RESULT)" = "$COVER" ] \
+        || fail "SELFTEST: expected the filled shulker box to fill a cover, and the recipe refused it"
+    say "SELFTEST: claiming the filled shulker box filled a cover"
+fi
+ctl click-slot $RESULT >/dev/null; ctl wait 2 >/dev/null
+[ -n "$(slot_where $EMPTY)" ] || fail "the empty cover was consumed by the refused fill"
+[ -n "$(slot_where minecraft:shulker_box)" ] || fail "the filled shulker box was consumed by the refused fill"
+shulker_after=$(stack_json minecraft:shulker_box)
+case "$shulker_after" in
+    *container*) say "  nothing was consumed and the shulker box still carries its contents" ;;
+    *) fail "the refused fill emptied the shulker box: $shulker_after" ;;
+esac
+close_table
+
+say "== L. a named block is refused the same way, and a plain one still fills =="
+open_table
+ctl command "item replace entity @s hotbar.1 with minecraft:stone[minecraft:custom_name='{\"text\":\"Named\"}'] 1" >/dev/null
+ctl give $EMPTY 1 >/dev/null
+ctl wait 3 >/dev/null
+place_one $EMPTY 100
+place_one minecraft:stone 101
+named_in=$(stack_json minecraft:stone)
+case "$named_in" in
+    *custom_name*) say "  the block in the grid is named: $named_in" ;;
+    *) fail "the named stone lost its component before the craft: $named_in" ;;
+esac
+expect_no_result "fill empty cover + named stone"
+ctl click-slot $RESULT >/dev/null; ctl wait 2 >/dev/null
+[ -n "$(slot_where $EMPTY)" ] || fail "the empty cover was consumed by the refused fill"
+[ -n "$(slot_where minecraft:stone)" ] || fail "the named stone was consumed by the refused fill"
+say "  the named stone is untouched"
+close_table
+# Differential in the same table: the identical gesture with a plain stone fills, so "no result"
+# is the stack's property and not a broken table.
+open_table
+ctl give $EMPTY 1 >/dev/null
+ctl give minecraft:stone 2 >/dev/null
+ctl wait 3 >/dev/null
+place_one $EMPTY 100
+place_one minecraft:stone 101
+expect_result $COVER 1 "fill empty cover + plain stone (same table)"
+take_result 0
+ctl wait 3 >/dev/null
+close_table
+ctl select 1 >/dev/null; ctl wait 2 >/dev/null
+[ "$(count $COVER)" = 1 ] || fail "the plain fill did not give a cover, got $(count $COVER)"
+[ "$(count minecraft:stone)" = 1 ] || fail "the plain fill did not consume exactly one stone, got $(count minecraft:stone) left"
+say "  the plain stone filled a cover and exactly one stone was consumed"
+
+say "== M. a filled shulker box clicked on a cable applies no cover =="
+ctl command "clear @s" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $T_X $C_Y $T_Z $CABLE" >/dev/null
+ctl wait 5 >/dev/null
+[ "$(ctl block $T_X $C_Y $T_Z | jq -r '.block')" = "$CABLE" ] || fail "the second cable did not place"
+ctl command "item replace entity @s hotbar.0 with minecraft:shulker_box[minecraft:container=[{slot:0b,item:{id:\"minecraft:diamond\",count:1}}]] 1" >/dev/null
+ctl wait 3 >/dev/null
+ctl select 1 >/dev/null; ctl wait 2 >/dev/null
+[ "$(ctl inventory | jq -r '.held.item')" = "minecraft:shulker_box" ] \
+    || fail "the shulker box is not the held item ($(ctl inventory | jq -c '.held'))"
+ctl command "execute in minecraft:the_end run tp @s $((T_X)).5 $C_Y $((T_Z + 1)).5" >/dev/null
+ctl wait 3 >/dev/null
+ctl key shift down >/dev/null; ctl wait 3 >/dev/null
+ctl interact $T_X $C_Y $T_Z >/dev/null || say "  interact answered $?"
+ctl wait 5 >/dev/null
+ctl key shift up >/dev/null; ctl wait 3 >/dev/null
+expect_no_cover $T_X $C_Y $T_Z "after the shulker click"
+[ "$(ctl block $T_X $C_Y $T_Z | jq -r '.block')" = "$CABLE" ] || fail "the shulker box was placed over the cable"
+[ "$(count minecraft:shulker_box)" = 1 ] || fail "the shulker box was consumed by the click"
+say "  no cover was applied and the shulker box stays in hand"
+ctl command "clear @s" >/dev/null
+
+say "PASS: covers, both recipes, attach, replace, strip, the break drop, the attach refusals and the fill refusals"
 stop_game
 
 # ================================================================ control

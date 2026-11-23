@@ -87,16 +87,35 @@ pub fn attach(existing: Option<&str>, incoming: &str) -> (Attach, Option<String>
 }
 
 /// One cell of the crafting grid, as the special cover recipe sees it.
+///
+/// Each cell carries the facts the rule needs to refuse a stack it would destroy: a cover knows
+/// whether it carries components of its own, and a block item knows whether its block has a block
+/// entity and whether the stack carries components. The recipe consumes the stacks it is given and
+/// keeps only a block id, so a stack with anything else in it (contents, a name, an enchantment, a
+/// dye) would come back as a plain item after the cover is stripped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cell {
     /// Nothing in the cell.
     Empty,
-    /// A cover or an empty cover; `Some(block)` when it already wears a block.
-    Cover(Option<String>),
-    /// An item that places a block, with the block's id. Not named `Block`: the `fits`
-    /// analyzer reads a `Block(..)` variant as a `mod_api::Block` construction and false-fails a
-    /// later build (`notes.md`, trap 4).
-    Places(String),
+    /// A cover or an empty cover.
+    Cover {
+        /// The block it wears, when it is filled.
+        worn: Option<String>,
+        /// Whether the stack carries components besides the mod's own `cover_block`.
+        components: bool,
+    },
+    /// An item that places a block. Not named `Block`: the `fits` analyzer reads a `Block(..)`
+    /// variant as a `mod_api::Block` construction and false-fails a later build (`notes.md`,
+    /// trap 4).
+    Places {
+        /// The block the item places.
+        block: String,
+        /// Whether that block has a block entity, so the item carries state a block id cannot
+        /// keep (a shulker box's contents live in its block entity).
+        block_entity: bool,
+        /// Whether the stack carries components of its own (contents, a name, an enchantment).
+        components: bool,
+    },
     /// Any other item.
     Other(String),
 }
@@ -113,33 +132,58 @@ pub enum Plan {
 /// Upstream's `CoverRecipe.matches`/`assemble`, as a rule over the grid: exactly one cover-family
 /// item, and either one block beside an empty cover (fill) or nothing beside a filled one (strip).
 ///
-/// Upstream also refuses a block whose default state is not a full collision cube, or that has a
-/// block entity; the recipe hook at this pin has no host, so that half is checked when the cover is
-/// put on a transmitter (`notes.md`, "Deviations").
+/// A stack is only consumed when the cover can give back what it took. The recipe keeps a **block
+/// id**, so it refuses:
+///
+/// * a block item whose block has a block entity (a shulker box's contents, a chest's inventory
+///   live in the entity, not in the item's id);
+/// * a stack that carries components of its own (contents, a custom name, an enchantment, damage);
+/// * a cover stack that carries anything besides its own `cover_block`.
+///
+/// Upstream has the same rule for a block entity at attach time (`!(item.getBlock() instanceof
+/// EntityBlock)`); the component half is the defect this port fixes, because a filled shulker box
+/// used to become a cover that stripped back to an **empty** box (`notes.md`, "Upstream defects
+/// fixed"). A refused stack is never consumed: no plan, no result.
+///
+/// Upstream also refuses a block whose default state is not a full collision cube; the recipe hook
+/// at this pin has no host, so that half stays checked when the cover is put on a transmitter
+/// (`notes.md`, "Deviations").
 #[must_use]
 pub fn special(cells: &[Cell]) -> Option<Plan> {
     let mut cover: Option<&Option<String>> = None;
+    let mut cover_components = false;
     let mut block: Option<&str> = None;
+    let mut block_lossy = false;
     for cell in cells {
         match cell {
             Cell::Empty => {}
-            Cell::Cover(worn) => {
+            Cell::Cover { worn, components } => {
                 if cover.is_some() {
                     return None;
                 }
                 cover = Some(worn);
+                cover_components = *components;
             }
-            Cell::Places(id) => {
+            Cell::Places {
+                block: id,
+                block_entity,
+                components,
+            } => {
                 if block.is_some() {
                     return None;
                 }
                 block = Some(id.as_str());
+                block_lossy = *block_entity || *components;
             }
             Cell::Other(_) => return None,
         }
     }
+    if cover_components {
+        return None;
+    }
     match (cover, block) {
-        (Some(None), Some(id)) => Some(Plan::Fill(id.to_owned())),
+        (Some(None), Some(id)) if !block_lossy => Some(Plan::Fill(id.to_owned())),
+        (Some(None), Some(_)) => None,
         (Some(Some(worn)), None) => Some(Plan::Strip(worn.clone())),
         _ => None,
     }
@@ -177,6 +221,31 @@ pub fn centre(pos: [i32; 3]) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An empty cover with nothing on it.
+    fn empty_cover() -> Cell {
+        Cell::Cover {
+            worn: None,
+            components: false,
+        }
+    }
+
+    /// A filled cover wearing `block`.
+    fn cover_of(block: &str) -> Cell {
+        Cell::Cover {
+            worn: Some(block.to_owned()),
+            components: false,
+        }
+    }
+
+    /// A plain block item that places `block`.
+    fn plain_block(block: &str) -> Cell {
+        Cell::Places {
+            block: block.to_owned(),
+            block_entity: false,
+            components: false,
+        }
+    }
 
     /// Every transmitter family the parent port's naming covers is a transmitter.
     #[test]
@@ -248,11 +317,7 @@ mod tests {
     /// An empty cover and one block make a cover wearing that block.
     #[test]
     fn an_empty_cover_and_a_block_fill_it() {
-        let cells = [
-            Cell::Cover(None),
-            Cell::Places("minecraft:stone".to_owned()),
-            Cell::Empty,
-        ];
+        let cells = [empty_cover(), plain_block("minecraft:stone"), Cell::Empty];
         assert_eq!(
             special(&cells),
             Some(Plan::Fill("minecraft:stone".to_owned()))
@@ -262,9 +327,8 @@ mod tests {
     /// A filled cover alone strips back to an empty one and gives the block back.
     #[test]
     fn a_filled_cover_alone_strips_back_to_empty() {
-        let cells = [Cell::Cover(Some("minecraft:stone".to_owned()))];
         assert_eq!(
-            special(&cells),
+            special(&[cover_of("minecraft:stone")]),
             Some(Plan::Strip("minecraft:stone".to_owned()))
         );
     }
@@ -272,8 +336,8 @@ mod tests {
     /// An empty cover alone, a block alone, and an empty grid make nothing.
     #[test]
     fn an_empty_cover_alone_makes_nothing() {
-        assert_eq!(special(&[Cell::Cover(None)]), None);
-        assert_eq!(special(&[Cell::Places("minecraft:stone".to_owned())]), None);
+        assert_eq!(special(&[empty_cover()]), None);
+        assert_eq!(special(&[plain_block("minecraft:stone")]), None);
         assert_eq!(special(&[]), None);
         assert_eq!(special(&[Cell::Empty, Cell::Empty]), None);
     }
@@ -281,12 +345,9 @@ mod tests {
     /// Two covers in the grid make nothing, filled or not.
     #[test]
     fn two_covers_in_the_grid_make_nothing() {
-        assert_eq!(special(&[Cell::Cover(None), Cell::Cover(None)]), None);
+        assert_eq!(special(&[empty_cover(), empty_cover()]), None);
         assert_eq!(
-            special(&[
-                Cell::Cover(Some("minecraft:stone".to_owned())),
-                Cell::Cover(Some("minecraft:glass".to_owned())),
-            ]),
+            special(&[cover_of("minecraft:stone"), cover_of("minecraft:glass")]),
             None
         );
     }
@@ -296,9 +357,9 @@ mod tests {
     fn an_empty_cover_takes_exactly_one_block() {
         assert_eq!(
             special(&[
-                Cell::Cover(None),
-                Cell::Places("minecraft:stone".to_owned()),
-                Cell::Places("minecraft:glass".to_owned()),
+                empty_cover(),
+                plain_block("minecraft:stone"),
+                plain_block("minecraft:glass"),
             ]),
             None
         );
@@ -308,7 +369,7 @@ mod tests {
     #[test]
     fn a_non_block_item_cannot_fill_a_cover() {
         assert_eq!(
-            special(&[Cell::Cover(None), Cell::Other("minecraft:stick".to_owned())]),
+            special(&[empty_cover(), Cell::Other("minecraft:stick".to_owned())]),
             None
         );
     }
@@ -317,11 +378,86 @@ mod tests {
     #[test]
     fn a_filled_cover_beside_a_block_cannot_strip() {
         assert_eq!(
+            special(&[cover_of("minecraft:stone"), plain_block("minecraft:glass")]),
+            None
+        );
+    }
+
+    /// A filled shulker box is refused: the recipe keeps only a block id, so its contents would be
+    /// lost (the strip would hand back an empty box). No plan means no result and no consumption.
+    #[test]
+    fn a_filled_shulker_box_cannot_fill_a_cover() {
+        assert_eq!(
             special(&[
-                Cell::Cover(Some("minecraft:stone".to_owned())),
-                Cell::Places("minecraft:glass".to_owned()),
+                empty_cover(),
+                Cell::Places {
+                    block: "minecraft:shulker_box".to_owned(),
+                    block_entity: true,
+                    components: true,
+                },
             ]),
             None
+        );
+    }
+
+    /// An empty shulker box (or a chest, a furnace) is refused too: its block entity is where the
+    /// item's state lives, and a cover stores a block id.
+    #[test]
+    fn a_block_with_a_block_entity_cannot_fill_a_cover() {
+        for block in [
+            "minecraft:shulker_box",
+            "minecraft:chest",
+            "minecraft:white_shulker_box",
+        ] {
+            assert_eq!(
+                special(&[
+                    empty_cover(),
+                    Cell::Places {
+                        block: block.to_owned(),
+                        block_entity: true,
+                        components: false,
+                    },
+                ]),
+                None,
+                "{block} has a block entity and cannot be a cover"
+            );
+        }
+    }
+
+    /// A named, enchanted or otherwise component-carrying block is refused: the component would
+    /// not survive the round trip through the cover's block id.
+    #[test]
+    fn a_block_with_components_cannot_fill_a_cover() {
+        assert_eq!(
+            special(&[
+                empty_cover(),
+                Cell::Places {
+                    block: "minecraft:stone".to_owned(),
+                    block_entity: false,
+                    components: true,
+                },
+            ]),
+            None
+        );
+    }
+
+    /// A cover that carries components of its own is refused on both routes: filling it would
+    /// drop them, and stripping it would hand back a bare empty cover.
+    #[test]
+    fn a_cover_with_components_of_its_own_is_refused() {
+        let named = |worn: Option<&str>| Cell::Cover {
+            worn: worn.map(str::to_owned),
+            components: true,
+        };
+        assert_eq!(
+            special(&[named(None), plain_block("minecraft:stone")]),
+            None,
+            "a named empty cover cannot be filled"
+        );
+        assert_eq!(
+            special(&[named(Some("minecraft:stone"))]),
+            None,
+            "a named filled cover cannot be stripped"
         );
     }
 

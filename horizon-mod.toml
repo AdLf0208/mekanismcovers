@@ -13,12 +13,14 @@
 # for a block another package registers; `notes.md` names the missing symbols.
 id = "mekanismcovers"
 name = "Mekanism Covers"
-version = "0.2.1"
+version = "0.2.2"
 description = """A port of Mekanism Covers for Horizon: empty covers crafted from iron nuggets, oak
 planks and glass, a cover filled with any full block through the mod's own special crafting
 recipe, and a filled cover right-clicked onto a Mekanism transmitter so the transmitter carries
 that block (a second cover replaces and drops the first, sneak + right-click with an empty cover
-strips it, and breaking the transmitter drops it). The cover rides the transmitter's own saved
+strips it, and breaking the transmitter drops it). The fill refuses a block whose item carries
+state a block id cannot keep — a block-entity block such as a shulker box, or any stack with
+components (contents, a custom name, an enchantment) — so no stack is consumed into data loss. The cover rides the transmitter's own saved
 data (mekanismcovers:cover), so it survives a reload with the block. The cover's appearance — the
 cover drawn instead of the transmitter, the full-block shape and its light — is recorded as a gap:
 the pinned API has no per-position appearance, shape or light override for a block another

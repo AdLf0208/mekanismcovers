@@ -22,7 +22,7 @@
   notices are kept.
 - **Source:** `horizon-mod.toml`, `Cargo.toml`, `src/lib.rs`, `src/runtime.rs`, `src/support.rs`,
   `assets/`, `data/` — everything needed to rebuild `mekanismcovers.hmod`.
-- **Status:** a first publication (0.2.0). The MPL-2.0 permits redistribution with its source; the
+- **Status:** a first publication (0.2.2). The MPL-2.0 permits redistribution with its source; the
   campaign's maintainer signs off the submission (ARCHITECTURE.md §8).
 
 ## Provenance of the pack jar

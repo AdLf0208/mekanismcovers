@@ -1,12 +1,14 @@
 # Mekanism Covers for Horizon
 
 A port of **Mekanism Covers** 1.3-BETA+1.21 (MPL-2.0) to Horizon 26.3, as one flat SDK package
-(`api = "0.2"`, `mekanismcovers.hmod`, version **0.2.1**): content and code in the same file. It
+(`api = "0.2"`, `mekanismcovers.hmod`, version **0.2.2**): content and code in the same file. It
 **requires Mekanism** (`[dependencies] mekanism = ">=0.2.2"` in `horizon-mod.toml`), because the
 cover is worn by a Mekanism transmitter and its state lives in that transmitter's own saved data.
 
 Craft four empty covers from an iron nugget frame, oak planks and glass; fill one with any full
-block through the mod's own `crafting_special_cover` recipe; right-click a Mekanism transmitter
+block through the mod's own `crafting_special_cover` recipe (a block whose item carries state a
+block id cannot keep — a shulker box, a named or enchanted stack — is refused, nothing consumed);
+right-click a Mekanism transmitter
 (cable, pipe or tube) with it and the transmitter carries that block. A second cover replaces the
 first and drops it, sneak + right-click with an empty cover strips one, and breaking the
 transmitter drops the cover beside its own loot.
@@ -14,14 +16,14 @@ transmitter drops the cover beside its own loot.
 ## Shape
 
 ```text
-horizon-mod.toml   the only manifest: id, version 0.2.1, api 0.2, [dependencies] mekanism, [native] pins
+horizon-mod.toml   the only manifest: id, version 0.2.2, api 0.2, [dependencies] mekanism, [native] pins
 Cargo.toml         the crate, depending on the pinned SDK (fetched into .horizon/sdk)
 src/lib.rs         the one impl mod_api::Hooks + the two item Parts
 src/runtime.rs     the rules (which blocks a cover may sit on, attach/replace, the special recipe)
 src/support.rs     glue: registry cache for the host-free recipe, the component, block entity I/O
 data/              two item declarations, the two recipes, the c tags they name, a creative tab
 assets/            item models, two textures (the mod's own), lang
-tools/e2e.sh       the in-game leg (phases A–J, control and selftest legs)
+tools/e2e.sh       the in-game leg (phases A–M, control and selftest legs)
 tools/build-game.sh  builds mekanism + mekanismcovers into one game for the leg
 LICENSE, LICENSE-NOTICE.md   MPL-2.0 and the notice
 notes.md, FINDINGS.md, VALIDATION.md

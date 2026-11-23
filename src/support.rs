@@ -24,17 +24,21 @@ pub(crate) const COVER_ITEM: &str = "mekanismcovers:cover";
 /// The empty cover item.
 pub(crate) const EMPTY_COVER_ITEM: &str = "mekanismcovers:empty_cover";
 
-/// A block-placing item and the block it places (`BlockItem.getBlock`).
+/// A block-placing item and the facts the host-free recipe needs about it (`BlockItem.getBlock`).
 #[derive(Clone, Debug)]
 struct Placed {
     /// The item.
     item: ItemKey,
     /// The block the item places.
     block: String,
+    /// Whether that block has, or may have, a block entity: its item carries state a block id
+    /// cannot keep (a shulker box's contents, a chest's inventory), so a cover refuses it.
+    block_entity: bool,
 }
 
 /// The two registry facts the host-free recipe needs: which item places which block
-/// (`instanceof BlockItem` plus `getBlock`), and which item is block `x`'s (`Block.asItem`).
+/// (`instanceof BlockItem` plus `getBlock`, with whether that block has a block entity), and which
+/// item is block `x`'s (`Block.asItem`).
 ///
 /// `CraftingRecipeKind::matches`/`assemble`/`remaining_items` take no host, so these are cached
 /// whenever one is available: [`reload`] runs after every registry/tag load.
@@ -51,9 +55,16 @@ pub(crate) fn refresh_registry(host: &dyn Host) {
             continue;
         };
         let block_id = block.id(host);
+        // Same test [`may_cover`] makes at the click: an unknown state is treated as having a
+        // block entity, so an item is never accepted on a guess.
+        let block_entity = host
+            .block_state_default(block)
+            .and_then(|state| host.block_states().has_block_entity(state))
+            != Some(false);
         placed.push(Placed {
             item,
             block: block_id.clone(),
+            block_entity,
         });
         if let Some(own) = host.block_item(block) {
             block_items.push((block_id, own));
@@ -67,15 +78,16 @@ pub(crate) fn refresh_registry(host: &dyn Host) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = block_items;
 }
 
-/// The block the stack places, when it places one: upstream's `instanceof BlockItem`.
-fn placed_block(stack: &ItemStack) -> Option<String> {
+/// The block-placing record for the stack, when it places a block: upstream's `instanceof
+/// BlockItem`.
+fn placed(stack: &ItemStack) -> Option<Placed> {
     let item = stack.item();
     PLACED
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
         .find(|placed| placed.item == item)
-        .map(|placed| placed.block.clone())
+        .cloned()
 }
 
 /// Block `id`'s own item stack, which stripping a cover gives back.
@@ -260,6 +272,10 @@ pub(crate) fn tooltip_line(stack: &ItemStack) -> Text {
 }
 
 /// The grid as [`runtime::special`] reads it.
+///
+/// The recipe keeps only a block id, so every cell also reports what the stack would lose if the
+/// recipe consumed it: a stack with components of its own, or a block whose item's state lives in
+/// a block entity (a shulker box's contents), comes back as a plain item after the strip.
 fn cells_of(grid: &CraftingGrid) -> Vec<Cell> {
     let cover = cover_item();
     let empty = empty_cover_item();
@@ -270,17 +286,45 @@ fn cells_of(grid: &CraftingGrid) -> Vec<Cell> {
             Some(stack) => {
                 let item = stack.item();
                 if Some(item) == empty {
-                    Cell::Cover(None)
+                    Cell::Cover {
+                        worn: None,
+                        components: cover_components(stack),
+                    }
                 } else if Some(item) == cover {
-                    Cell::Cover(worn_by(stack))
-                } else if let Some(block) = placed_block(stack) {
-                    Cell::Places(block)
+                    Cell::Cover {
+                        worn: worn_by(stack),
+                        components: cover_components(stack),
+                    }
+                } else if let Some(placed) = placed(stack) {
+                    Cell::Places {
+                        block: placed.block,
+                        block_entity: placed.block_entity,
+                        components: has_components(stack),
+                    }
                 } else {
                     Cell::Other(String::new())
                 }
             }
         })
         .collect()
+}
+
+/// Whether the stack carries any component of its own: a patch entry or a damage override.
+fn has_components(stack: &ItemStack) -> bool {
+    stack.components().is_some() || stack.damage_component().is_some()
+}
+
+/// Whether a cover stack carries anything besides the mod's own `cover_block` component.
+fn cover_components(stack: &ItemStack) -> bool {
+    if stack.damage_component().is_some() {
+        return true;
+    }
+    stack.components().is_some_and(|patch| {
+        patch.as_nbt().iter().any(|(id, _)| {
+            let id = id.to_string_lossy();
+            &*id != runtime::COMPONENT
+        })
+    })
 }
 
 /// The recipe's decoded body: the category, which is all a `crafting_special_cover` file carries.
