@@ -4,8 +4,10 @@
 # mod's own `crafting_special_cover` fill/strip recipe, and the cover a Mekanism transmitter
 # carries in its own saved data — attach, replace (the old cover drops), sneak-strip, the drop on
 # breaking the transmitter, the two refusals (a block that is not a full cube, a click that is
-# not a transmitter), and the fill's refusal of a stack it would destroy (a filled shulker box, a
-# named block, a cover carrying components of its own): no result, nothing consumed.
+# not a transmitter), and the two stack-carrying refusals: the fill's (a filled shulker box, a
+# named block, a cover carrying components of its own) and the click's (a filled cover carrying
+# components of its own, which the transmitter's block id cannot keep) — no result, nothing
+# consumed.
 #
 # The package needs its parent compiled into the same game: a cover is worn by
 # `mekanism:basic_universal_cable`, whose block entity is declared by the `mekanism` port's code.
@@ -19,16 +21,18 @@
 #
 # The End arena (stone floor at y=63, cleared volume to y=74, every non-player entity removed):
 #   C  =  8,64,8   the spare cable everything is attached to, replaced and broken
-#   T  = 12,64,8   a second cable, for the filled-shulker gesture of phase M
+#   T  = 12,64,8   a second cable, for the filled-shulker gesture of phase M and the named cover
+#                  of phase N
 #   X  = 16,64,8   a stone block: the fix "not a transmitter" control
 #   B  = 20,64,8   the crafting table the recipes are made on
 #
 # CONTROL=1 (the default) also launches the same Nightly **without either package**, where
 # `mekanismcovers:empty_cover` is unknown and the cable cannot be placed, so nothing the main run
 # proves can come from the plain build. SELFTEST=1 flips the replace phase's "exactly one cover
-# dropped" assertion and SELFTEST=refusal flips the filled-shulker refusal, so either run MUST exit
-# 1. NEGATIVE=1 flips the control leg's "the plain build does not know this item" assertion, so the
-# control is proven able to fail too (that leg needs CONTROL=1 and CONTROL_GAME).
+# dropped" assertion, SELFTEST=refusal flips the filled-shulker refusal and SELFTEST=named flips
+# the named cover's click refusal, so any of those runs MUST exit 1. NEGATIVE=1 flips the control
+# leg's "the plain build does not know this item" assertion, so the control is proven able to fail
+# too (that leg needs CONTROL=1 and CONTROL_GAME).
 set -Eeuo pipefail
 export LC_ALL=C
 [ -z "${MC_DEBUG:-}" ] || set -x
@@ -41,6 +45,8 @@ KEEP=${KEEP:-0}
 CLONE=${CLONE:-$(cd "$(dirname "$0")/../../.." && pwd)}
 PORT=$CLONE/ports/mekanismcovers
 # /tmp is a small tmpfs on this box: the harness may point E2E_TMP at a disk-backed root.
+# The game runs from the per-run scratch root, so its `saves/`, options.txt and caches stay there:
+# a leg starts a fresh world, and no Mojang file lands in the campaign tree.
 TMP_ROOT=${E2E_TMP:-/tmp/opencode}
 SOCK=${SOCK:-$TMP_ROOT/mekanismcovers-e2e.sock}
 RES=${RES:-${HORIZON_RES:?RES must point at the prepared 26.3 resources}}
@@ -83,16 +89,19 @@ launch() { # world dir game
     local world=$1 dir=$2 game=$3
     mkdir -p "$dir"/{data,config,home,game}
     (
+        # The game's folder is its working directory: `saves/`, options.txt and caches land there,
+        # not in the campaign tree, and every run starts from a fresh world.
+        cd "$dir" || exit 1
         export HORIZON_HOME=$dir/game XDG_DATA_HOME=$dir/data XDG_CONFIG_HOME=$dir/config HOME=$dir/home
         rm -f "$SOCK"
         ctl launch --game "$game" --world "$world" --seed 20261121 --creative --offscreen --wait \
-            --resources "$RES" >/dev/null
+            --resources "$RES"
     )
 }
 
 stop_game() {
     ctl quit >/dev/null 2>&1 || true
-    local lock="$SCRATCH/game/saves/$WORLD/session.lock"
+    local lock="$SCRATCH/saves/$WORLD/session.lock"
     for _ in $(seq 1 40); do [ -e "$lock" ] || break; sleep 1; done
     sleep 2
 }
@@ -125,6 +134,27 @@ ground() { # ground ITEM: how many of ITEM lie on the floor within 32 blocks
 # Everything of one item the run can see: in the inventory plus on the floor. A drop lands
 # within pickup range of the player who made it, so a bare floor count proves nothing.
 total() { echo $(( $(count "$1") + $(ground "$1") )); }
+# Wait up to 20 ticks for a total to reach WANT, then echo what it reads. An item spawned by a
+# click reaches the control client's entity list (and a nearby player's inventory) a tick or two
+# after the action, so sampling once right after the click can read 0 although the drop is there.
+await_total() { # await_total ITEM WANT
+    local got; got=$(total "$1")
+    for _ in $(seq 1 10); do
+        [ "$got" = "$2" ] && break
+        ctl wait 2 >/dev/null
+        got=$(total "$1")
+    done
+    echo "$got"
+}
+# Select the hotbar slot that holds ITEM, 1-based. `ctl give` lands in the first free slot, so a
+# leftover (a cover an earlier phase picked up) can take slot 0 and `select 1` would hold it.
+select_item() { # select_item ITEM
+    local slot
+    slot=$(ctl inventory | jq -r --arg i "$1" \
+        '[.hotbar | to_entries[] | select(.value.item == $i) | .key] | first // empty')
+    [ -n "$slot" ] || fail "no $1 in the hotbar"
+    ctl select $((slot + 1)) >/dev/null; ctl wait 2 >/dev/null
+}
 reply() { ctl command "$1" | jq -r '.chat // [] | join(" | ")'; }
 ok_of() { ctl command "$1" | jq -r '.ok'; }
 data_all() { reply "execute in minecraft:the_end run data get block $1 $2 $3"; }
@@ -300,7 +330,7 @@ cover_before=$(total $COVER)
 [ "$cover_before" = 1 ] || fail "expected one cover in hand before the replace, got $cover_before"
 use_block $C_X $C_Y $C_Z "the replace"
 expect_cover $C_X $C_Y $C_Z minecraft:glass "the replace"
-cover_after=$(total $COVER)
+cover_after=$(await_total $COVER "$cover_before")
 if [ "$SELFTEST" = 1 ]; then
     # Counterfactual: the run claims the replaced cover did NOT drop, so this must fail.
     [ "$cover_after" = $((cover_before - 1)) ] \
@@ -310,8 +340,9 @@ if [ "$SELFTEST" = 1 ]; then
 fi
 # Differentially: the first attach (D) took the held cover with nothing dropped (1 -> 0), while
 # this one took the held cover and put the replaced one back (1 -> 1).
-[ "$cover_after" = "$cover_before" ] \
-    || fail "the replace did not drop the cover it replaced ($cover_before -> $cover_after)"
+if [ "$cover_after" != "$cover_before" ]; then
+    fail "the replace did not drop the cover it replaced ($cover_before -> $cover_after; inventory $(count $COVER), floor $(ground $COVER); items: $(ctl entities 32 item | jq -c '[.entities[] | select(.kind == "item") | .item.item]'))"
+fi
 say "  the cable wears glass, the held cover is gone and the stone cover came back (1 -> 1)"
 
 say "== F. sneak + right-click with an empty cover strips it =="
@@ -323,7 +354,7 @@ ctl command "execute in minecraft:the_end run kill @e[type=item]" >/dev/null
 ctl wait 5 >/dev/null
 ctl give $EMPTY 1 >/dev/null
 ctl wait 3 >/dev/null
-ctl select 1 >/dev/null; ctl wait 2 >/dev/null
+select_item $EMPTY
 [ "$(ctl inventory | jq -r '.held.item')" = "$EMPTY" ] \
     || fail "the empty cover is not the held item ($(ctl inventory | jq -c '.held'))"
 stripped_before=$(total $COVER)
@@ -334,7 +365,7 @@ ctl interact $C_X $C_Y $C_Z >/dev/null || say "  interact answered $?"
 ctl wait 5 >/dev/null
 ctl key shift up >/dev/null; ctl wait 3 >/dev/null
 expect_no_cover $C_X $C_Y $C_Z "after the sneak strip"
-stripped_after=$(total $COVER)
+stripped_after=$(await_total $COVER $((stripped_before + 1)))
 [ "$stripped_after" = $((stripped_before + 1)) ] \
     || fail "the stripped glass cover did not drop ($stripped_before -> $stripped_after)"
 [ "$(count $EMPTY)" = 1 ] || fail "the empty cover was consumed by the strip ($(count $EMPTY) left)"
@@ -513,7 +544,45 @@ expect_no_cover $T_X $C_Y $T_Z "after the shulker click"
 say "  no cover was applied and the shulker box stays in hand"
 ctl command "clear @s" >/dev/null
 
-say "PASS: covers, both recipes, attach, replace, strip, the break drop, the attach refusals and the fill refusals"
+say "== N. a filled cover carrying components of its own is refused on the cable =="
+# The fill can no longer make such a stack (phases K/L), so the only way to hold one is by hand.
+# The click keeps a block id, so a cover renamed in an anvil would lose its name on the strip; it is
+# the fill's rule on the other consumption path. Phase D's plain cover still writes minecraft:stone.
+ctl command "item replace entity @s hotbar.0 with $COVER[mekanismcovers:cover_block=\"minecraft:stone\",minecraft:custom_name='{\"text\":\"Named\"}'] 1" >/dev/null
+ctl wait 3 >/dev/null
+ctl select 1 >/dev/null; ctl wait 2 >/dev/null
+[ "$(ctl inventory | jq -r '.held.item')" = "$COVER" ] \
+    || fail "the named cover is not the held item ($(ctl inventory | jq -c '.held'))"
+held=$(ctl inventory | jq -r '.held.components // ""')
+case "$held" in
+    *mekanismcovers:cover_block*minecraft:stone*) ;;
+    *) fail "the held stack is not a stone cover before the click: $held" ;;
+esac
+case "$held" in
+    *custom_name*) say "  the cover in hand is named: $held" ;;
+    *) fail "the named cover lost its name before the click: $held" ;;
+esac
+[ "$(ctl block $T_X $C_Y $T_Z | jq -r '.block')" = "$CABLE" ] \
+    || fail "the second cable is gone before the named cover click"
+ctl command "execute in minecraft:the_end run tp @s $((T_X)).5 $C_Y $((T_Z + 1)).5" >/dev/null
+ctl wait 3 >/dev/null
+ctl key shift down >/dev/null; ctl wait 3 >/dev/null
+ctl interact $T_X $C_Y $T_Z >/dev/null || say "  interact answered $?"
+ctl wait 5 >/dev/null
+ctl key shift up >/dev/null; ctl wait 3 >/dev/null
+if [ "$SELFTEST" = named ]; then
+    # Counterfactual: claim the named cover DID cover the cable, so this leg must fail.
+    expect_cover $T_X $C_Y $T_Z minecraft:stone "SELFTEST: the named cover"
+    say "SELFTEST: claiming the named cover covered the cable"
+    fail "SELFTEST: the named cover covered the cable"
+fi
+expect_no_cover $T_X $C_Y $T_Z "after the named cover click"
+[ "$(count $COVER)" = 1 ] || fail "the named cover was consumed by the refused click, $(count $COVER) left"
+[ "$(ctl block $T_X $C_Y $T_Z | jq -r '.block')" = "$CABLE" ] || fail "the named cover was placed over the cable"
+say "  the named cover is refused and stays in hand, while phase D's plain cover wrote minecraft:stone"
+ctl command "clear @s" >/dev/null
+
+say "PASS: covers, both recipes, attach, replace, strip, the break drop, the attach refusals, the fill refusals and the named-cover refusal"
 stop_game
 
 # ================================================================ control

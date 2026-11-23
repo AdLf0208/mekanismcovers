@@ -13,14 +13,17 @@
 # for a block another package registers; `notes.md` names the missing symbols.
 id = "mekanismcovers"
 name = "Mekanism Covers"
-version = "0.2.2"
+version = "0.2.3"
 description = """A port of Mekanism Covers for Horizon: empty covers crafted from iron nuggets, oak
 planks and glass, a cover filled with any full block through the mod's own special crafting
 recipe, and a filled cover right-clicked onto a Mekanism transmitter so the transmitter carries
 that block (a second cover replaces and drops the first, sneak + right-click with an empty cover
 strips it, and breaking the transmitter drops it). The fill refuses a block whose item carries
 state a block id cannot keep — a block-entity block such as a shulker box, or any stack with
-components (contents, a custom name, an enchantment) — so no stack is consumed into data loss. The cover rides the transmitter's own saved
+components (contents, a custom name, an enchantment) — so no stack is consumed into data loss. A
+cover stack that carries components of its own (a filled cover renamed in an anvil) is refused on
+the transmitter for the same reason: the click keeps only the block id, so its strip would lose
+them. The cover rides the transmitter's own saved
 data (mekanismcovers:cover), so it survives a reload with the block. The cover's appearance — the
 cover drawn instead of the transmitter, the full-block shape and its light — is recorded as a gap:
 the pinned API has no per-position appearance, shape or light override for a block another
@@ -39,7 +42,7 @@ capabilities = ["registries"]
 # own saved data, so the parent's code has to be installed. The floor is the first Mekanism
 # package this port actually ran against in game (`VALIDATION.md`, the 2026-11-21 cover leg,
 # which staged mekanism 0.2.2); 0.2.0/0.2.1 were never exercised with a cable this package
-# writes to. 0.2.3's only change (the chemical tank) leaves the cable and its saved data
+# writes to. Mekanism 0.2.3's only change (the chemical tank) leaves the cable and its saved data
 # byte-identical, and every later version the resolver checks keeps them.
 [dependencies]
 mekanism = { version = ">=0.2.2", reason = "The covers are worn by Mekanism transmitters and the cover state lives in the transmitter's saved data; this package binds to mekanism:basic_universal_cable and its block entity.", url = "https://github.com/AdLf0208/mekanism" }

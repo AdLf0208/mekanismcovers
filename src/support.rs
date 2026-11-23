@@ -315,7 +315,7 @@ fn has_components(stack: &ItemStack) -> bool {
 }
 
 /// Whether a cover stack carries anything besides the mod's own `cover_block` component.
-fn cover_components(stack: &ItemStack) -> bool {
+pub(crate) fn cover_components(stack: &ItemStack) -> bool {
     if stack.damage_component().is_some() {
         return true;
     }

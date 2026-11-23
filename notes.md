@@ -1,4 +1,4 @@
-# Mekanism Covers → Horizon — first port (0.2.0), required parent declared (0.2.1), fill refuses a lossy stack (0.2.2)
+# Mekanism Covers → Horizon — first port (0.2.0), required parent declared (0.2.1), fill refuses a lossy stack (0.2.2), the click refuses one too (0.2.3)
 
 Port of **Mekanism Covers 1.3-BETA+1.21** (`dev.lucaargolo.mekanismcovers`, author D4rkness_King,
 **MPL-2.0**), the exact ATM10 jar `mekanismcovers-1.3-BETA+1.21.jar` (Modrinth
@@ -13,6 +13,128 @@ the same MPL-2.0 (`LICENSE`, `LICENSE-NOTICE.md`). Not on the upstream registry 
 version: a **first publication** (`dispatch-gate.py` exit 0).
 
 Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
+
+## 0.2.3 — the same rule on the click path (2026-11-23)
+
+**Why this version exists.** 0.2.2 closed the fill path: a cover stack carrying anything besides
+`cover_block` can no longer be *made*. `cover_click` still consumed one. A filled cover renamed in
+an anvil is hand-made — the fill now refuses that stack — and the click stored only the block id,
+so a strip handed back a fresh empty cover and an unnamed block: the name was lost at the only other
+point that consumes a cover stack. This is the 0.2.2 next-slice item, taken before the appearance
+half because it is the same rule and needs no new API.
+
+Skills: superpowers/using-superpowers,test-driven-development,verification-before-completion; BeautifulRust/rust-best-practices
+
+### The rule (pure, in `runtime`)
+
+`runtime::attachable(id, stack)` is the click's rule: a filled cover may be put on a transmitter only
+when its stack says nothing besides the block (`CoverStack::BlockOnly`) and the id is well formed.
+`support::cover_components` — the helper the 0.2.2 recipe already uses — reports that fact;
+`cover_click` maps it and refuses with `InteractionResult::Fail`, so the stack stays in hand and the
+transmitter keeps any cover it already wore. Nothing was added to `special`: the recipe path is
+unchanged.
+
+| path | stack | through 0.2.2 | now |
+|---|---|---|---|
+| fill | cover stack with extra components | no result, nothing consumed | unchanged |
+| click, filled cover | cover renamed in an anvil | applied; the strip lost the name | **refused**: no key written, stack stays in hand |
+| click, plain filled cover | only `cover_block` | applies | unchanged (e2e D) |
+
+### Red first (verbatim, `sdk-test-red-0.2.3.log`)
+
+The test was written first; its first run could not compile because the API it names did not exist
+yet (`error[E0425]: cannot find function 'attachable' in this scope`, `EXIT:101`). A stub that
+accepted every stack then made the failure behavioural, and that stub run is what
+`sdk-test-red-0.2.3.log` keeps, so the recorded failure is the behaviour and not a missing name:
+
+```
+test runtime::tests::a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter ... FAILED
+
+---- runtime::tests::a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter stdout ----
+thread 'runtime::tests::a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter' (3660261) panicked at src/runtime.rs:490:9:
+a named filled cover would lose its name on the strip
+
+test result: FAILED. 18 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+Green after the rule: **19 passed, 0 failed**. Every earlier test (the fill refusals, the strip, the
+attach arithmetic) passes unchanged, so the new refusal is the click's alone.
+
+### The 0.2.3 ladder
+
+| step | result |
+|---|---|
+| tests | `cargo test --offline` → **19 passed**, 0 failed (`sdk-test.log`, regenerated for 0.2.3) |
+| lints | clippy 0 warnings, `cargo fmt --all --check` clean (`sdk-clippy.log`, `sdk-fmt.log`) |
+| build ×2 | **111,743 B**, SHA-256 `c9d4e8705f37f5a10dc8f70bed96c35b3bb1fa4da3d77b2172ace386c33b631f`, `cmp` identical, 24 entries, no packed lock (`sdk-build.log`) |
+| check | `mekanismcovers 0.2.3 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)`, `111743 bytes, SHA-256 c9d4e870…631f`, **EXIT 0** (`sdk-check.log`) |
+| fits, pin | `0a875da  made for`, EXIT 0 (`sdk-fits-pin.log`) |
+| fits, other | `0b14f8a  fits`, EXIT 0 (`sdk-fits-0b14f8a.log`) |
+| package gate | `verify-sdk-package.py mekanismcovers` → **1/1** (9 checks: package, runtime byte-identical, every packed file the tree's bytes, no packed lock, 19 tests, clippy, check, fits, skills) |
+| manifest deps | `check-manifest-deps.py mekanismcovers` → `ok declared=['mekanism']`, exit 0 |
+| absence proof | `dep-absent.log` (0.2.2), still the same `[dependencies] mekanism >= 0.2.2` table: `error: mekanismcovers requires missing mod mekanism (…)`, EXIT 1 |
+| pair build | `tools/build-game.sh` → `Compiling mekanism (1 of 2)` / `Compiling mekanismcovers (2 of 2)`, `native-0a875da-c60077301fe3` (`pair-build-0.2.3.log`) |
+
+The probe-generated `Cargo.lock` is stripped from each build with `zip -q -d … Cargo.lock`; both
+stripped archives are byte-identical and the gate's "no packed Cargo.lock" check is green. The
+manifest declares a *mod* dependency, not a crates.io one, so nothing needs the lock.
+
+The licence and its notice were **not touched** in this slice (`LICENSE` is the MPL-2.0 text,
+`LICENSE-NOTICE.md` names D4rkness_King and the repository; both are still packed). The notice's
+status parenthetical still says 0.2.2; it was left as delivered at the owner's instruction.
+
+### In-game proof (fail-capable), phase N
+
+Against the paired build (`mekanism` 0.2.8 + this package), the same arena and cable as phase M:
+
+| phase | assertion | how it could fail |
+|---|---|---|
+| N | a `mekanismcovers:cover` carrying `cover_block=minecraft:stone` **and** `custom_name` (hand-made: the fill refuses that stack) is sneak-clicked on `mekanism:basic_universal_cable` at `12,64,8`; the read-back is `Found no elements matching mekanismcovers:cover`, the cover stays in hand (1), the cable is still there | 0.2.2 applied it and wrote the block id — the name would be gone on the next strip; the in-hand component read proves the stack really carried the name |
+| N, `SELFTEST=named` | the same click is *claimed* to cover the cable | the leg exits 1 at `FAIL: SELFTEST: the named cover: expected minecraft:stone in the transmitter's saved data, got: Found no elements matching mekanismcovers:cover` (`e2e-selftest-named.log`) |
+| differential | phase D's **plain** stone cover in the same run writes `"minecraft:stone"` and is consumed | the rule could be too broad; D proves a plain cover still applies |
+
+Transcript (`mekanismcovers-e2e/e2e.log`):
+
+```
+== N. a filled cover carrying components of its own is refused on the cable ==
+  the cover in hand is named: {"mekanismcovers:cover_block":"minecraft:stone","minecraft:custom_name":'{"text":"Named"}'}
+  after the named cover click -> the transmitter wears no cover
+  the named cover is refused and stays in hand, while phase D's plain cover wrote minecraft:stone
+```
+
+Every earlier phase (A–M) passed again unchanged. The six legs:
+
+| leg | log | result |
+|---|---|---|
+| main | `e2e.log` | **PASS**, `EXIT:0` (A–N) |
+| control (plain build) | `e2e-control.log` | **PASS**, `EXIT:0` |
+| control counterfactual | `e2e-control-negative.log` | **FAIL**, `EXIT:1` |
+| selftest (replace) | `e2e-selftest.log` | **FAIL**, `EXIT:1` |
+| selftest (the fill refusal) | `e2e-selftest-refusal.log` | **FAIL**, `EXIT:1` |
+| selftest (the click refusal) | `e2e-selftest-named.log` | **FAIL**, `EXIT:1` |
+
+`check-e2e-logs.py mekanismcovers-e2e --strict` → `logs=6 ok=6 missing-exit=0 bad-exit=0`.
+
+### Three harness fixes this slice needed (the legs found them)
+
+The first two are races in the *scenario*, not in the package, and both were proven by a leg going
+red on behaviour the earlier version passed; the third is a hygiene fix that made the world fresh
+per run.
+
+1. **F assumed `ctl give` lands in hotbar slot 0.** A cover an earlier phase had picked up can hold
+   that slot, and `select 1` then held the leftover instead of the empty cover. `select_item ITEM`
+   now finds the hotbar slot that holds the item (`inventory.hotbar`) and selects it.
+2. **A drop is not always visible on the first sample.** `total` could read 0 a tick after a click
+   because the spawned item had not reached the control client's entity list (and the player's
+   pickup is delayed 10 ticks by `cover_drop`). `await_total` gives the reading a bounded 20-tick
+   window; a genuinely missing drop still fails, and the failure message prints inventory, floor and
+   the item list.
+3. **The game's folder is its working directory.** `ctl launch --game …` writes `saves/`,
+   options.txt and caches under the *caller's* cwd, so the leg was writing
+   `saves/MekCoversE2E` into the campaign root and resuming the previous run's world (the launch
+   state showed the last run's player position and held stack). `launch` now `cd`s into the per-run
+   scratch root, `stop_game` waits on `$SCRATCH/saves/<world>/session.lock`, and every leg starts a
+   fresh world with no Mojang file in the tree.
 
 ## 0.2.2 — a stack the fill would destroy is refused (2026-11-23)
 
@@ -267,8 +389,8 @@ mod's name. `tested` names the e2e phase in `tools/e2e.sh` that exercises it.
 | item `cover` | `CoverItem`, `mekanismcovers:cover_block` component, block-name tooltip | same item + a string component `mekanismcovers:cover_block` (id registered in `component_types`) | **tested** — e2e A, C (`held.components` read back = `minecraft:stone`), D/E/F/I/J |
 | recipe `mekanismcovers:cover` (shaped → 4 empty covers) | `crafting_shaped`, `c:nuggets/osmium` + `c:dusts/wood` + `c:glass_blocks` | carried shape `#R#/RGR/#R#`; ingredients adapted (deviation 1): `#c:nuggets/iron`, `minecraft:oak_planks`, `#c:glass_blocks` (both `c:` tags declared by this package) | **tested** — e2e B: result 4 × `empty_cover`, all nine cells consumed |
 | recipe `mekanismcovers:crafting_special_cover` | `CustomRecipe`: fill / strip with the block returned | registered as a `CraftingRecipeKind` (`crafting_special_cover`) with the same rule in `runtime::special` | **tested** — e2e C (fill), H (fill with a non-cube), J (strip + the block returned), K/L (refusals), L (plain differential) |
-| the fill's refusal of a stack it would destroy | `CoverRecipe.matches` reads the **block** only (full cube, not an `EntityBlock`); the stack's components are never looked at | the same rule over facts the grid supplies: a block-entity block, a stack with components, a cover with extra components → **no plan** (`runtime::special`) | **tested** — e2e K (filled shulker, `SELFTEST=refusal` counterfactual), L (named stone + plain differential), M (the click) |
-| attach to a transmitter | `CoverItem.useOn` + `TileEntityTransmitterMixin` field | the cover rides the **transmitter's own saved data** under `mekanismcovers:cover` (`/data merge block` path); click through the item Part's `use_on` | **tested** — e2e D (key absent → `minecraft:stone` after the click, still there 40 ticks later), E, F, I |
+| the refusals of a stack the mod would destroy | `CoverRecipe.matches` reads the **block** only (full cube, not an `EntityBlock`); the stack's components are never looked at, and `CoverItem.useOn` never looks at the stack either | the same rule over facts the grid supplies (`runtime::special`: a block-entity block, a stack with components, a cover with extra components → **no plan**) **and on the click** (`runtime::attachable`: a cover carrying anything besides `cover_block` → `InteractionResult::Fail`) | **tested** — e2e K (filled shulker, `SELFTEST=refusal` counterfactual), L (named stone + plain differential), M (the click), N (a named filled cover clicked on a cable, `SELFTEST=named` counterfactual) |
+| attach to a transmitter | `CoverItem.useOn` + `TileEntityTransmitterMixin` field | the cover rides the **transmitter's own saved data** under `mekanismcovers:cover` (`/data merge block` path); click through the item Part's `use_on`, a stack carrying more than the block is refused | **tested** — e2e D (key absent → `minecraft:stone` after the click, still there 40 ticks later), E, F, I; N (a named cover writes nothing and stays in hand) |
 | replace (old cover drops) | `removeCover(..., true)` before the new state | `runtime::attach` + `level.spawn_item` of a filled cover | **tested** — e2e E, differentially against D (1 → 0 vs 1 → 1) |
 | strip with a wrench + sneak | `BlockBaseMixin.useItemOn`, `MekanismUtils.canUseAsWrench` | sneak + right-click with an **empty cover** (deviation 2: the parent port ships no Configurator) | **tested** — e2e F (key gone, the cover dropped, the empty cover kept) |
 | drop on removal | `BlockMekanismMixin.onRemove` | `Hooks::block_drops` pushes a filled cover beside the block's own loot | **tested** — e2e I (cover + cable both drop) |
@@ -326,6 +448,26 @@ behave exactly as before (e2e L's differential).
 
 Worth an upstream report: yes (a one-line `stack.getComponents().isEmpty()` guard in
 `CoverRecipe.matches`), but filing it is the orchestrator's call.
+
+### The click keeps a block id too, so a hand-made cover lost its name (0.2.3)
+
+The same defect has a second point of loss. `CoverItem.useOn` stores the worn block on the
+transmitter and consumes the held stack; nothing in upstream reads the stack's components, so a
+filled cover renamed in an anvil (or given lore, or enchanted) applies, and the strip returns a
+fresh empty cover and `block.asItem()` — the name is gone. Upstream's own fill cannot produce that
+stack, which is why the loss needs a hand-made cover to show itself; a player who renames a cover is
+enough.
+
+**What this port does instead.** `runtime::attachable` refuses a filled cover whose stack carries
+anything besides `cover_block` (the 0.2.2 helper `support::cover_components` reports it), with
+`InteractionResult::Fail`: no key is written, the transmitter keeps the cover it wore, and the stack
+stays in hand. e2e N asserts the read-back is `Found no elements` while the inventory still holds
+the named cover, and phase D in the same run proves a plain cover still applies.
+
+**What a user notices.** A renamed cover no longer silently loses its name on the cable: the click
+does nothing and the cover stays in hand, exactly as a torch-filled cover already did (phase H).
+
+Worth an upstream report: yes, the same guard in `CoverItem.useOn`; the orchestrator decides.
 
 ## Deviations (each one is a decision, not an omission)
 
@@ -386,10 +528,11 @@ parent up.
 
 Craft covers, fill one with stone/glass/any full block, right-click a Mekanism cable and the cable
 *carries* that cover (visible in `/data get block`), replace it, strip it with sneak + empty cover,
-and break the cable to get the cover back. **Nothing draws the cover yet** — that is the one
-blocked family, and the report says so rather than pretending.
+and break the cable to get the cover back. A stack a cover cannot keep — a named block in the fill,
+a named cover on the cable — is refused with the stack untouched (0.2.2/0.2.3). **Nothing draws the
+cover yet** — that is the one blocked family, and the report says so rather than pretending.
 
-## Verification — the 0.2.0 first port (evidence in `ports/_shared/evidence/mekanismcovers/`; 0.2.1 and 0.2.2 above)
+## Verification — the 0.2.0 first port (evidence in `ports/_shared/evidence/mekanismcovers/`; 0.2.1–0.2.3 above)
 
 | step | command | result |
 |---|---|---|
@@ -422,6 +565,18 @@ blocked family, and the report says so rather than pretending.
 * A drop lands **inside pickup range** of the player who made it, so a bare `ground` count proves
   nothing: the assertions use inventory + floor (`total`), and the two attach phases are compared
   differentially (first attach 1 → 0, replace 1 → 1).
+* `ctl give` fills the **first free hotbar slot**, not always slot 0: a cover an earlier phase
+  picked up can hold slot 0, and `select 1` then holds the leftover (this made phase F read a
+  filled cover in the 0.2.3 run). `select_item ITEM` selects the slot that holds the item
+  (`inventory.hotbar`); `item replace … hotbar.0` is the other way to be sure.
+* A drop a click spawns can be **invisible on the first sample** (the entity list syncs a tick
+  later, and `cover_drop`'s pickup delay is 10 ticks), so `total` read 0 right after a replace
+  (phase E). `await_total ITEM WANT` gives it a bounded 20-tick window; a genuinely missing drop
+  still fails, with inventory, floor and the item list in the message.
+* The game's folder is the **cwd of the `ctl launch` caller**: with `--game PATH` it writes
+  `saves/` there, not under `HORIZON_HOME` (only a launcher-installed version keeps saves in the
+  game home). Launching from the campaign root left `saves/MekCoversE2E` in the tree and resumed
+  the previous run's world; `launch` now runs from the per-run scratch dir.
 * `--headless` hangs `ctl screen`/`menu`; the recipe phases need `--offscreen`.
 * `ctl give` takes an **item id only**; a stack with components needs
   `ctl command "item replace entity @s hotbar.N with minecraft:stone[minecraft:custom_name='{\"text\":\"Named\"}'] 1"`
@@ -434,28 +589,30 @@ blocked family, and the report says so rather than pretending.
 
 ## Next slice
 
-Two candidates, in this order:
+The mechanical half has no workable gap left at this pin; the next family is the **appearance
+half**, whose gap lines are the four `blocked(…)` rows in the family table.
 
-1. **The attach path and a component-carrying cover (the same rule, the other consumption).** A
-   cover stack that carries components besides `cover_block` (a cover renamed in an anvil) is
-   consumed by `cover_click` and the transmitter stores only the block id, so the name is lost on
-   the strip. The fill can never produce such a stack (0.2.2 refuses it), so the trigger is a
-   hand-made cover; the fix is the same refusal in `cover_click`
-   (`support::cover_components(stack)` for the filled cover) with a unit test and an e2e phase
-   (a named cover clicked on a cable → no key, the cover stays in hand). Not shipped in 0.2.2
-   because the review asked for the recipe path and every behaviour change needs its own in-game
-   assertion.
-2. **The appearance half**, as soon as the pin (or the parent port) offers one hook:
+**Slice: the cover's appearance, when the pin (or the parent port) offers the hook.** The gap is
+`blocked(no-foreign-block-appearance)` — `Horizon`'s surface has no per-position
+`block_appearance`/`get_appearance` (or model override) for a block another package declares, so
+the cover can be stored but not drawn. Upstream's `BlockTransmitterMixin.getAppearance` + the eight
+client mixins are the shape to rebuild. It fits the **`machines` tier** because the cover *is* the
+block's appearance for a transmitter the parent port owns; nothing else in the mod is left.
 
-1. **`block_appearance`/`get_appearance` (or a per-position model override) for a block another
-   package declares** — then `mekanismcovers` can return the worn block's state for the cable at
-   `pos` and the client meshes it (upstream's `getAppearance` + the 8 client mixins). Assertion:
-   `ctl screenshot` at the covered cable shows the cover's texture, and the same cable stripped
-   shows the cable again.
-2. **`shape`/`dynamic_light` for a foreign block** — the full-block collision and the cover's light;
-   assertion: a player cannot walk through a covered cable and `ctl light` at the cable reads the
-   cover's emission.
-3. Parent-side: the **Configurator** lands in `ports/mekanism`, which restores upstream's
-   wrench+sneak strip (keep the empty-cover route as a second spelling).
-4. Parent-side: the other transmitter families (pipes, tubes), which this port already accepts by
-   id (`is_transmitter` matches `mekanism:*_cable|_pipe|_tube`) with no code change.
+The slice starts by re-checking the new pin's catalog, not by writing code:
+
+```sh
+cargo horizon-mod hooks appearance        # and: hooks shape, hooks light_emission
+```
+
+If `get_appearance`/`block_appearance` is present, `mekanismcovers` returns the worn block's state
+for the cable at `pos`; the in-game assertion is **`--offscreen` + `ctl screenshot`**: a covered
+cable's frame shows the cover's texture (the mod's own `cover` texture at 12,64,8), and after
+`ctl key shift down` + `ctl interact` with an empty cover (the 0.2.2 strip) the same frame shows the
+cable's texture again. A pixel sample of the screenshot is compared between the two frames, so the
+assertion fails if the cover is not drawn (the current package draws the bare cable in both).
+
+`shape`/`dynamic_light` for a foreign block are the same family's second and third gap
+(`blocked(no-foreign-block-shape)`, `blocked(no-foreign-dynamic-light)`); their assertions are
+walk-through refusal and `ctl light` at the cable. Until the pin has the symbols, this slice is a
+re-check, not an implementation — that is the `blocked` rule, not a reason to fake a renderer.

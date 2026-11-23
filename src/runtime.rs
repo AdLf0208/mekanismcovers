@@ -1,5 +1,6 @@
-//! The rules of Mekanism Covers, with no game access: which blocks a cover may sit on, what a
-//! second cover does to the first, and what the special crafting recipe accepts.
+//! The rules of Mekanism Covers, with no game access: which blocks a cover may sit on, which
+//! cover stacks a click may consume, what a second cover does to the first, and what the special
+//! crafting recipe accepts.
 //!
 //! The glue in [`crate`] reads the clicked block, the held stack and the transmitter's saved data;
 //! this module decides, and the tests below are the mod's own numbers and rules.
@@ -187,6 +188,28 @@ pub fn special(cells: &[Cell]) -> Option<Plan> {
         (Some(Some(worn)), None) => Some(Plan::Strip(worn.clone())),
         _ => None,
     }
+}
+
+/// What a filled cover's stack carries besides the block it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoverStack {
+    /// Only the mod's own `cover_block` component.
+    BlockOnly,
+    /// Something else too: a custom name, lore, an enchantment, a damage override.
+    Extras,
+}
+
+/// Whether a filled cover stack may be put on a transmitter.
+///
+/// A transmitter's saved data keeps a block id and nothing else, so the click consumes a stack
+/// whose components it cannot keep: an anvil-renamed cover would lose its name, and the strip would
+/// hand back a fresh empty cover and a plain block. This is the fill path's rule (`special`, which
+/// refuses a cover carrying extra components) on the other consumption path. The fill can no longer
+/// produce such a stack, so the only way to hold one is to make it by hand — which is exactly why
+/// the click has to check it too.
+#[must_use]
+pub fn attachable(id: &str, stack: CoverStack) -> bool {
+    is_identifier(id) && stack == CoverStack::BlockOnly
 }
 
 /// The tooltip a cover item shows under its name: the block it wears, or "Empty".
@@ -458,6 +481,26 @@ mod tests {
             special(&[named(Some("minecraft:stone"))]),
             None,
             "a named filled cover cannot be stripped"
+        );
+    }
+
+    /// A cover stack carrying anything besides its `cover_block` — a name from an anvil, lore, an
+    /// enchantment — cannot be put on a transmitter: the click consumes the stack and a strip hands
+    /// back a fresh empty cover and a plain block, so the name would be lost. A cover carrying
+    /// nothing but its block still applies, as phase D of the in-game leg shows.
+    #[test]
+    fn a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter() {
+        assert!(
+            attachable("minecraft:stone", CoverStack::BlockOnly),
+            "a plain filled cover still applies"
+        );
+        assert!(
+            !attachable("minecraft:stone", CoverStack::Extras),
+            "a named filled cover would lose its name on the strip"
+        );
+        assert!(
+            !attachable("Stone", CoverStack::BlockOnly),
+            "a malformed id is refused whether or not the stack carries components"
         );
     }
 

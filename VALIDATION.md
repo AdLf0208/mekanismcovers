@@ -1,4 +1,84 @@
-# VALIDATION — mekanismcovers 0.2.0 / 0.2.1 / 0.2.2
+# VALIDATION — mekanismcovers 0.2.0 / 0.2.1 / 0.2.2 / 0.2.3
+
+## 0.2.3 — the click refuses a cover stack it would destroy (2026-11-23)
+
+`cover_click` consumed a filled cover carrying anything besides its own `cover_block` (a cover
+renamed in an anvil — the fill refuses that stack since 0.2.2, so it can only be hand-made) and
+stored only the block id, so the strip handed back a fresh empty cover and an unnamed block.
+`runtime::attachable` now refuses it with `InteractionResult::Fail`; `support::cover_components`
+(the 0.2.2 helper) supplies the fact. A part of the same rule as the fill fix, on the other
+consumption path. See `notes.md` §0.2.3 and §"Upstream defects fixed".
+
+| # | step | command | evidence | result |
+|---|---|---|---|---|
+| 1 | red | `cargo test --offline` with the rule unwritten | `sdk-test-red-0.2.3.log` | first run **EXIT 101** (`cannot find function 'attachable'`, not kept: the log holds the behavioural run); behavioural run **1 failed** (`a named filled cover would lose its name on the strip`), 18 passed |
+| 2 | tests | `cargo test --offline` | `sdk-test.log` | **19 passed**, 0 failed |
+| 3 | lints | `cargo clippy --offline --all-targets -- -D warnings` | `sdk-clippy.log` | 0 warnings, EXIT 0 |
+| 4 | format | `cargo fmt --all -- --check` | `sdk-fmt.log` | EXIT 0 |
+| 5 | build ×2 | `rm -f Cargo.lock && cargo horizon-mod build` twice, then strip the probe's `Cargo.lock` | `sdk-build.log` | **111,743 B**, SHA-256 `c9d4e8705f37f5a10dc8f70bed96c35b3bb1fa4da3d77b2172ace386c33b631f`, `CMP-IDENTICAL`, 24 entries, no packed lock |
+| 6 | check | `cargo horizon-mod check mekanismcovers.hmod` | `sdk-check.log` | `mekanismcovers 0.2.3 (native-mod, …)`, `111743 bytes, SHA-256 c9d4e870…631f`, EXIT 0 |
+| 7 | fits, pin | `cargo horizon-mod fits mekanismcovers.hmod --build 0a875da` | `sdk-fits-pin.log` | `0a875da  made for`, EXIT 0 |
+| 8 | fits, other | `… --build 0b14f8a` | `sdk-fits-0b14f8a.log` | `0b14f8a  fits`, EXIT 0 |
+| 9 | package gate | `python3 ports/tools/verify-sdk-package.py mekanismcovers` | run output | **1/1** (package, runtime byte-identical, every packed file the tree's bytes, no packed lock, 19 tests, clippy, check, fits, skills gate) |
+| 10 | manifest deps | `python3 ports/tools/check-manifest-deps.py mekanismcovers` | run output | `ok declared=['mekanism']`, exit 0 |
+| 11 | absence proof | unchanged `[dependencies] mekanism >= 0.2.2` table (§0.2.1) | `dep-absent.log` | `error: mekanismcovers requires missing mod mekanism (…)`, EXIT 1 |
+| 12 | pair build | `tools/build-game.sh` | `pair-build-0.2.3.log` | `Compiling mekanism (1 of 2)` / `Compiling mekanismcovers (2 of 2)`, `native-0a875da-c60077301fe3` |
+| 13 | main leg | `tools/e2e.sh` (`CONTROL=0`), phases A–N | `mekanismcovers-e2e/e2e.log` | **PASS**, `EXIT:0` |
+| 14 | control | `CONTROL=1` | `mekanismcovers-e2e/e2e-control.log` | **PASS**, `EXIT:0` |
+| 15 | control counterfactual | `NEGATIVE=1 CONTROL=1` | `mekanismcovers-e2e/e2e-control-negative.log` | **FAIL**, `EXIT:1` (as required) |
+| 16 | selftest, replace | `SELFTEST=1 CONTROL=0` | `mekanismcovers-e2e/e2e-selftest.log` | **FAIL**, `EXIT:1` (as required) |
+| 17 | selftest, the fill refusal | `SELFTEST=refusal CONTROL=0` | `mekanismcovers-e2e/e2e-selftest-refusal.log` | **FAIL**, `EXIT:1` (as required) |
+| 18 | selftest, the click refusal | `SELFTEST=named CONTROL=0` | `mekanismcovers-e2e/e2e-selftest-named.log` | **FAIL**, `EXIT:1` (as required) |
+| 19 | e2e log gate | `python3 ports/tools/check-e2e-logs.py mekanismcovers-e2e --strict` | run output | `logs=6 ok=6 missing-exit=0 bad-exit=0` |
+
+The behavioural red, verbatim from `sdk-test-red-0.2.3.log`:
+
+```
+---- runtime::tests::a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter stdout ----
+
+thread 'runtime::tests::a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter' (3660261) panicked at src/runtime.rs:490:9:
+a named filled cover would lose its name on the strip
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::tests::a_cover_with_components_of_its_own_cannot_be_put_on_a_transmitter
+
+test result: FAILED. 18 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+The in-game refusal and its counterfactual, verbatim:
+
+```
+== N. a filled cover carrying components of its own is refused on the cable ==
+  the cover in hand is named: {"mekanismcovers:cover_block":"minecraft:stone","minecraft:custom_name":'{"text":"Named"}'}
+  after the named cover click -> the transmitter wears no cover
+  the named cover is refused and stays in hand, while phase D's plain cover wrote minecraft:stone
+```
+
+```
+FAIL: SELFTEST: the named cover: expected minecraft:stone in the transmitter's saved data, got: Found no elements matching mekanismcovers:cover
+EXIT:1
+```
+
+Every step ran inside a `ports/tools/build-slot.sh` lease (`BUILD_LOCAL=1`, `CARGO_INCREMENTAL=0`,
+no `--target-dir`, no private `BUILD_SLOTS_DIR`), from the campaign root, at pin
+**`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** + horizon-mixins
+**`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**; the game legs set `E2E_TMP` to a disk-backed root
+(`/tmp` is a 7.5 GB tmpfs here).
+
+### Packaging (0.2.3)
+
+```
+mekanismcovers.hmod   111,743 bytes
+sha256                c9d4e8705f37f5a10dc8f70bed96c35b3bb1fa4da3d77b2172ace386c33b631f
+entries               24 (horizon-mod.toml, Cargo.toml, LICENSE, LICENSE-NOTICE.md, README.md,
+                      3 src/*.rs, 6 assets/*, 7 data/*, icon.png, uses.json)
+declared version      0.2.3 (horizon-mod.toml == Cargo.toml == the registry record the orchestrator adds)
+Cargo.lock            not packed (the probe's file is stripped from each build)
+LICENSE               Mozilla Public License Version 2.0 (373 lines) — untouched
+LICENSE-NOTICE.md     names D4rkness_King and https://github.com/lucaargolo/mekanism-covers — untouched
+```
 
 ## 0.2.2 — the fill refuses a stack it would destroy (2026-11-23)
 

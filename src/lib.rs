@@ -57,6 +57,11 @@ fn drop_cover(host: &mut dyn ServerHost, level: LevelRef, pos: [i32; 3], cover: 
 /// consumes the held item. The empty cover strips a cover only with sneak held — the pin has no
 /// Mekanism Configurator for upstream's wrench, which the parent port does not register
 /// (`notes.md`, "Deviations").
+///
+/// A filled cover whose stack carries anything besides its own `cover_block` is refused with
+/// [`InteractionResult::Fail`]: the transmitter's saved data keeps a block id, so the click would
+/// consume a name (or lore, or an enchantment) it cannot keep. It is the fill's rule on the other
+/// consumption path (`runtime::attachable`).
 fn cover_click(host: &mut dyn ServerHost, event: &UseOnEvent<'_>) -> Option<InteractionResult> {
     let level = host.level(host.dimension())?;
     support::transmitter_at(&*host, level, event.pos)?;
@@ -77,7 +82,12 @@ fn cover_click(host: &mut dyn ServerHost, event: &UseOnEvent<'_>) -> Option<Inte
             InteractionResult::Success
         });
     };
-    if !runtime::is_identifier(&incoming)
+    let stack = if support::cover_components(event.stack) {
+        runtime::CoverStack::Extras
+    } else {
+        runtime::CoverStack::BlockOnly
+    };
+    if !runtime::attachable(&incoming, stack)
         || !support::may_cover(&*host, level, &incoming, event.pos)
     {
         return Some(InteractionResult::Fail);
