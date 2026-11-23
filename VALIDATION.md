@@ -1,4 +1,47 @@
-# VALIDATION — mekanismcovers 0.2.0
+# VALIDATION — mekanismcovers 0.2.0 / 0.2.1
+
+## 0.2.1 — the required parent declaration (2026-11-23)
+
+A manifest-only fix: `horizon-mod.toml` now declares Mekanism as a required parent
+(`[dependencies] mekanism = { version = ">=0.2.2", reason = "…", url = "https://github.com/AdLf0208/mekanism" }`).
+The floor is the first Mekanism package whose cable this port actually ran against in game
+(0.2.2); see `notes.md` §0.2.1 for the reasoning. No behaviour changed.
+
+| # | step | command | evidence | result |
+|---|---|---|---|---|
+| 1 | tests | `cargo test --offline` | `sdk-test.log` | **14 passed**, 0 failed (regenerated for 0.2.1) |
+| 2 | lints | `cargo clippy --all-targets --offline -- -D warnings` | `sdk-clippy.log` | 0 warnings, EXIT 0 |
+| 3 | format | `cargo fmt -- --check` | `sdk-fmt.log` | EXIT 0 |
+| 4 | build ×2 | `rm -f Cargo.lock && cargo horizon-mod build` twice, then strip the probe's `Cargo.lock` | `sdk-build.log`, `sdk-build-second.log` | **108,910 B**, SHA-256 `e12b57be0a0465ceca3bbc04f6c86ab602c23e3ebf38e5b14e14447d03fd8942`, `CMP-IDENTICAL`, 24 entries, no packed lock |
+| 5 | check | `cargo horizon-mod check mekanismcovers.hmod` | `sdk-check.log` | `mekanismcovers 0.2.1 (native-mod, …)`, `108910 bytes, SHA-256 e12b57be…8942`, EXIT 0 |
+| 6 | fits, pin | `cargo horizon-mod fits … --build 0a875da` | `sdk-fits-pin.log` | `0a875da  made for`, EXIT 0 |
+| 7 | fits, other | `cargo horizon-mod fits … --build 0b14f8a` | `sdk-fits-0b14f8a.log` | `0b14f8a  fits`, EXIT 0 |
+| 8 | package gate | `python3 ports/tools/verify-sdk-package.py mekanismcovers` | run output | **1/1** |
+| 9 | manifest deps | `python3 ports/tools/check-manifest-deps.py mekanismcovers` | run output | `ok declared=['mekanism']`, exit 0 |
+| 10 | absence proof | `horizon-launcher native-build` on a set of **only** `mekanismcovers` | `dep-absent.log` | `error: mekanismcovers requires missing mod mekanism (…)`, EXIT 1 |
+| 11 | pair build | `tools/build-game.sh` | `pair-build-0.2.1.log` | `Compiling mekanism (1 of 2)` / `Compiling mekanismcovers (2 of 2)`; built `native-0a875da-b55bc848e005` |
+| 12 | main leg | `tools/e2e.sh` (`CONTROL=0`) | `mekanismcovers-e2e/e2e.log` | **PASS**, `EXIT:0` (A–J) |
+| 13 | control | `CONTROL=1` | `mekanismcovers-e2e/e2e-control.log` | **PASS**, `EXIT:0` |
+| 14 | control counterfactual | `NEGATIVE=1 CONTROL=1` | `mekanismcovers-e2e/e2e-control-negative.log` | **FAIL**, `EXIT:1` (as required) |
+| 15 | selftest | `SELFTEST=1 CONTROL=0` | `mekanismcovers-e2e/e2e-selftest.log` | **FAIL**, `EXIT:1` (as required) |
+| 16 | e2e log gate | `check-e2e-logs.py mekanismcovers-e2e --strict` | run output | `logs=4 ok=4 missing-exit=0 bad-exit=0` |
+
+The refusal text, verbatim:
+
+```
+error: mekanismcovers requires missing mod mekanism (The covers are worn by Mekanism transmitters and the cover state lives in the transmitter's saved data; this package binds to mekanism:basic_universal_cable and its block entity. https://github.com/AdLf0208/mekanism)
+```
+
+The pair build ran against the current parent (`mekanism` 0.2.8). The four in-game logs are the
+same A–J scenario as 0.2.0; see the coverage table below.
+
+**Packed lock.** A manifest with `[dependencies]` makes `cargo horizon-mod build` probe the crate,
+which creates a `Cargo.lock` that the packer includes. The package has no Cargo registry
+dependency (the SDK is a path dep; the launcher uses Horizon's own lock), so each build's archive
+is delivered with that probe file stripped (`zip -q -d … Cargo.lock`); both stripped builds are
+byte-identical. Without the declaration the same build packs none (ad-hoc `/tmp/opencode/mcprobe`).
+
+## 0.2.0 — the first package (2026-11-21)
 
 Every step ran inside a `ports/tools/build-slot.sh` lease (`CARGO_INCREMENTAL=0`, no
 `--target-dir`, no private `BUILD_SLOTS_DIR`), from the campaign root, at pin

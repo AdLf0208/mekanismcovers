@@ -1,4 +1,4 @@
-# Mekanism Covers → Horizon — first port (0.2.0)
+# Mekanism Covers → Horizon — first port (0.2.0), required parent declared (0.2.1)
 
 Port of **Mekanism Covers 1.3-BETA+1.21** (`dev.lucaargolo.mekanismcovers`, author D4rkness_King,
 **MPL-2.0**), the exact ATM10 jar `mekanismcovers-1.3-BETA+1.21.jar` (Modrinth
@@ -13,6 +13,96 @@ the same MPL-2.0 (`LICENSE`, `LICENSE-NOTICE.md`). Not on the upstream registry 
 version: a **first publication** (`dispatch-gate.py` exit 0).
 
 Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
+
+## 0.2.1 — the required parent, declared (2026-11-23)
+
+**Why this version exists.** Two reviewers refused sibling packages for the same defect
+(#1605 `industrialforegoingsouls`, #1663 `industrialization_overdrive`): a package that resolves
+another mod's ids declared no `[dependencies]`, and the pinned resolver reads **declared
+dependencies**, not block ids or README prose (`horizon/launcher/src/native_mods/dependencies.rs`
+at the pin). `ports/tools/check-manifest-deps.py mekanismcovers` found the class here too:
+
+```
+mekanismcovers               FAIL declared=-    HARD  uses mekanism in ['code'] with no declaration
+```
+
+A cover is worn by `mekanism:basic_universal_cable` and the cover key lives in that transmitter's
+own saved data, so Mekanism is a **required** parent, not an optional integration. The declaration
+is now in `horizon-mod.toml`:
+
+```toml
+[dependencies]
+mekanism = { version = ">=0.2.2", reason = "…", url = "https://github.com/AdLf0208/mekanism" }
+```
+
+**Why the floor is 0.2.2.** The surface this package calls is the cable's block entity and its
+saved data. The first Mekanism package whose cable this port actually ran against in game is
+**0.2.2** (`VALIDATION.md`, the 2026-11-21 leg, staged at 12:35); 0.2.0 had no in-game run at all
+(its validation gap 1) and 0.2.1 was the review fix. 0.2.3's only change (the chemical tank) leaves
+the cable and its saved data byte-identical, and the leg below ran against the current parent,
+0.2.8. A lower floor would accept a parent nobody has exercised the cover against.
+
+### Proof (a): with Mekanism absent the loader refuses the package by name
+
+`tools/dep-absent.log`: a native mod set containing only `mekanismcovers` is handed to the
+launcher's `native-build` — the pinned resolver, before any mod code is compiled or registered:
+
+```
+$ horizon-launcher native-build /tmp/opencode/mekanismcovers-absent-set --instance e2e --trust-native-code --json
+error: mekanismcovers requires missing mod mekanism (The covers are worn by Mekanism transmitters and the cover state lives in the transmitter's saved data; this package binds to mekanism:basic_universal_cable and its block entity. https://github.com/AdLf0208/mekanism)
+EXIT:1
+```
+
+The refusal names both mods, quotes the declaration's own `reason` and `url`, and happens before
+compilation, so it is a named refusal, not a registration crash. **Counterfactual:** the same set
+with the `[dependencies]` table removed (an ad-hoc copy at `/tmp/opencode/mcprobe`) builds with no
+refusal and packs no lock, so the refusal is the declaration's effect.
+
+### Proof (b): with Mekanism present every existing leg still passes
+
+`tools/build-game.sh` stages both source trees and the launcher compiles them together
+(`pair-build-0.2.1.log`: `Compiling mekanism (1 of 2)` / `Compiling mekanismcovers (2 of 2)`).
+The cover scenario (phases A–J) is unchanged, and the four required runs are green:
+
+| leg | log | result |
+|---|---|---|
+| main | `mekanismcovers-e2e/e2e.log` | PASS, `EXIT:0` (A–J) |
+| control (plain build) | `mekanismcovers-e2e/e2e-control.log` | PASS, `EXIT:0` |
+| control counterfactual | `mekanismcovers-e2e/e2e-control-negative.log` | FAIL, `EXIT:1` (as required) |
+| selftest | `mekanismcovers-e2e/e2e-selftest.log` | FAIL, `EXIT:1` (as required) |
+
+`check-e2e-logs.py mekanismcovers-e2e --strict` → `logs=4 ok=4 missing-exit=0 bad-exit=0`.
+
+The pair build that ran the legs (`native-0a875da-b55bc848e005`) and the final rebuilt pair
+(`native-0a875da-0784a7933142`, after the README edit) produce **byte-identical**
+`libmekanismcovers.so` (SHA-256 `d99f825e934237a2ad4ab0b0a5bc0ce555f166516d9a31e06eae65f4a721e9bd`)
+and `libmekanism.so` (`676d2f759160abec566b28c7c2f99a53b8128e576ed4d930606af35ad7231bb5`), so the
+logs test the delivered source, not an older compile.
+
+### The 0.2.1 ladder
+
+| step | result |
+|---|---|
+| tests | `cargo test --offline` → **14 passed**, 0 failed (`sdk-test.log`, regenerated for 0.2.1) |
+| lints | clippy 0 warnings, `cargo fmt --check` clean (`sdk-clippy.log`, `sdk-fmt.log`) |
+| build ×2 | **108,910 B**, SHA-256 `e12b57be0a0465ceca3bbc04f6c86ab602c23e3ebf38e5b14e14447d03fd8942`, `cmp` identical, 24 entries |
+| check | `mekanismcovers 0.2.1 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)`, `108910 bytes, SHA-256 e12b57be…8942`, **EXIT 0** (`sdk-check.log`) |
+| fits, pin | `0a875da  made for`, EXIT 0 (`sdk-fits-pin.log`) |
+| fits, other | `0b14f8a  fits`, EXIT 0 (`sdk-fits-0b14f8a.log`) |
+| package gate | `verify-sdk-package.py mekanismcovers` → **1/1** |
+| manifest deps | `check-manifest-deps.py mekanismcovers` → `ok declared=['mekanism']`, exit 0 |
+
+**The probe-generated lock.** `cargo horizon-mod build` now runs a probe for a manifest that
+declares a dependency, and that probe creates a `Cargo.lock` (8,835 B) which the packer includes.
+This package has no *Cargo* registry dependency — the SDK is a path dependency and the launcher
+builds against Horizon's own lock — so the delivery strips the probe file with
+`zip -q -d … Cargo.lock` after each build. Both stripped builds are byte-identical and the gate's
+"no packed Cargo.lock" check is green. Without the declaration the same build packs none.
+
+No behaviour changed: the family table and coverage below are the 0.2.0 ones, and every phase
+passed again. Only the manifest, the version strings and two harness fixes changed
+(`tools/e2e.sh` now honours `E2E_TMP`; `tools/build-game.sh` falls back to the base Nightly's
+prepared 26.3 resources when a prebuilt-base version carries no `.local/`).
 
 ## What the mod is
 
@@ -112,12 +202,14 @@ This is a **world-state interop contract** on a key name, exactly as `ARCHITECTU
 for add-ons ("re-implemented in the child crate using the parent port as the pattern"); no Rust
 symbol of the parent is referenced.
 
-The leg ran against the parent port as staged at 12:35 on 2026-11-21 (`mekanism` 0.2.2 sources).
-The parent moved to 0.2.3 while this port was being verified (another agent's chemical-tank slice);
-`diff` of the two trees shows the change touches `is_chemical_tank`/`chemical_readout`/
-`chemical_insert` and rustfmt only — `CABLE`, `CABLE_TYPE`, the cable's Part and its `write_state`
-are byte-identical, so the contract is unaffected. Re-run `tools/build-game.sh` before the next
-slice and the leg picks the current parent up.
+The 0.2.0 leg ran against the parent port as staged at 12:35 on 2026-11-21 (`mekanism` 0.2.2
+sources). The parent moved to 0.2.3 while this port was being verified (another agent's
+chemical-tank slice); `diff` of the two trees shows the change touches
+`is_chemical_tank`/`chemical_readout`/`chemical_insert` and rustfmt only — `CABLE`, `CABLE_TYPE`,
+the cable's Part and its `write_state` are byte-identical, so the contract is unaffected. The
+0.2.1 leg (`tools/build-game.sh`, 2026-11-23) ran against the current parent, **0.2.8**, and every
+phase passed. Re-run `tools/build-game.sh` before the next slice and the leg picks the current
+parent up.
 
 ## What a user can do today
 

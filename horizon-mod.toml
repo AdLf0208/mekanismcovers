@@ -13,7 +13,7 @@
 # for a block another package registers; `notes.md` names the missing symbols.
 id = "mekanismcovers"
 name = "Mekanism Covers"
-version = "0.2.0"
+version = "0.2.1"
 description = """A port of Mekanism Covers for Horizon: empty covers crafted from iron nuggets, oak
 planks and glass, a cover filled with any full block through the mod's own special crafting
 recipe, and a filled cover right-clicked onto a Mekanism transmitter so the transmitter carries
@@ -31,6 +31,16 @@ api = "0.2"
 # host or single-player world runs them inside the client installation.
 side = "both"
 capabilities = ["registries"]
+
+# The parent is required, not an optional integration: a cover is worn by a Mekanism
+# transmitter (`mekanism:basic_universal_cable`) and the cover key lives in that transmitter's
+# own saved data, so the parent's code has to be installed. The floor is the first Mekanism
+# package this port actually ran against in game (`VALIDATION.md`, the 2026-11-21 cover leg,
+# which staged mekanism 0.2.2); 0.2.0/0.2.1 were never exercised with a cable this package
+# writes to. 0.2.3's only change (the chemical tank) leaves the cable and its saved data
+# byte-identical, and every later version the resolver checks keeps them.
+[dependencies]
+mekanism = { version = ">=0.2.2", reason = "The covers are worn by Mekanism transmitters and the cover state lives in the transmitter's saved data; this package binds to mekanism:basic_universal_cable and its block entity.", url = "https://github.com/AdLf0208/mekanism" }
 
 [native]
 game = "26.3"

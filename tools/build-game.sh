@@ -103,8 +103,16 @@ PY
 print_env() { # tag
     local tag=$1
     [ -x "$OUT/horizon-client" ] || export_version "$tag" "$OUT"
+    # A `native-build` version made from a prebuilt base may carry no `.local/` of its own (the
+    # launcher reuses the base's prepared 26.3 resources); look there before giving up.
     local control_res=$VERSIONS/$tag/.local/horizon-client/$RES_VERSION
-    [ -d "$control_res" ] || die "no prepared resources at $control_res" 6
+    if [ ! -d "$control_res" ]; then
+        for control_res in "$VERSIONS/nightly-2026-11-20-$PIN/.local/horizon-client/$RES_VERSION" \
+                           "/home/adlf/Desktop/horizon/.local/horizon-client/$RES_VERSION"; do
+            [ -d "$control_res" ] && break
+        done
+    fi
+    [ -d "$control_res" ] || die "no prepared resources at $VERSIONS/$tag/.local or the base nightly" 6
     env_block mekanismcovers "$OUT/horizon-client" "$OUT/horizon-ctl" \
         "$E2E_ROOT/$PIN/control/horizon-client" "$control_res"
 }

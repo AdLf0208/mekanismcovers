@@ -5,7 +5,7 @@
 # Cargo's name and version are not the mod's identity: horizon-mod.toml is.
 [package]
 name = "mekanismcovers"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MPL-2.0"
 description = "Mekanism Covers for Horizon: cover a Mekanism transmitter with any full block"

@@ -39,7 +39,9 @@ KEEP=${KEEP:-0}
 
 CLONE=${CLONE:-$(cd "$(dirname "$0")/../../.." && pwd)}
 PORT=$CLONE/ports/mekanismcovers
-SOCK=${SOCK:-/tmp/opencode/mekanismcovers-e2e.sock}
+# /tmp is a small tmpfs on this box: the harness may point E2E_TMP at a disk-backed root.
+TMP_ROOT=${E2E_TMP:-/tmp/opencode}
+SOCK=${SOCK:-$TMP_ROOT/mekanismcovers-e2e.sock}
 RES=${RES:-${HORIZON_RES:?RES must point at the prepared 26.3 resources}}
 GAME=${GAME:?GAME must be the paired build's client (tools/build-game.sh --env)}
 CTL=${CTL:?CTL must be the paired build's horizon-ctl}
@@ -56,7 +58,8 @@ T_X=12; T_Z=8
 X_X=16; X_Z=8
 B_X=20; B_Z=8
 
-SCRATCH=$(mktemp -d /tmp/opencode/mekanismcovers-e2e.XXXXXX)
+mkdir -p "$TMP_ROOT"
+SCRATCH=$(mktemp -d "$TMP_ROOT"/mekanismcovers-e2e.XXXXXX)
 LOG=$SCRATCH/run.log
 trap 'status=$?; echo "EXIT:$status"' EXIT
 exec > >(tee -a "$LOG") 2>&1
